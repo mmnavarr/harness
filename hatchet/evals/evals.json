@@ -1,0 +1,38 @@
+{
+  "skill_name": "hatchet",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I need to use the Hatchet CLI from my laptop to inspect failed jobs on the Alliance Railway instance at http://railway-monorepo:11744. I have the token in fnox/keychain, not in my shell history. What exact setup and read-only commands should I run?",
+      "expected_output": "Explains fnox/mise token setup, creates/uses the railway-monorepo profile with HATCHET_CLIENT_SERVER_URL=http://railway-monorepo:11744 and HATCHET_CLIENT_TLS_STRATEGY=none applied during profile creation and read-only commands, and suggests failed-run inspection commands without printing the token.",
+      "expectations": [
+        "Mentions storing or using HATCHET_CLIENT_TOKEN through fnox keychain and mise injection without printing the token.",
+        "Uses the Hatchet profile flow rather than a nonexistent hatchet login command.",
+        "Includes the API override HATCHET_CLIENT_SERVER_URL=http://railway-monorepo:11744.",
+        "Includes the API/TLS overrides when creating the profile and running read-only commands."
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "hatchet runs list is working with the railway-monorepo profile, but starting a local Hatchet worker from this repo fails with connection errors. Can I just point everything at http://railway-monorepo:11744?",
+      "expected_output": "Distinguishes Hatchet UI/API from gRPC, explains that 11744 targets the API/frontend and local workers need the engine gRPC endpoint, cites the repo BullQueue worker path, and recommends tunneling or aliasing the hardcoded gRPC host:port or running through the BullQueue control-plane path.",
+      "expectations": [
+        "States that http://railway-monorepo:11744 is the UI/API route, not the worker gRPC endpoint.",
+        "Mentions the repo's hardcoded Hatchet gRPC endpoint hatchet.railway.internal:7077 or the need to preserve or alias that host:port.",
+        "Says the repo normally starts the Hatchet worker through BullQueue rather than hatchet worker dev.",
+        "Does not recommend pasting the token into commands or logs."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The Hatchet CLI says unknown command login and profile add seems to connect to some weird internal URL from the token. How should I debug this safely for the Alliance Railway Hatchet deployment?",
+      "expected_output": "Explains there is no hatchet login command, uses profile add, describes token-derived server_url/grpc_broadcast_address, gives route health checks and environment overrides, and keeps token handling redacted.",
+      "expectations": [
+        "Correctly says Hatchet CLI has no login command and uses profile add.",
+        "Explains token-derived/stale server URL behavior without exposing the token.",
+        "Includes curl http://railway-monorepo:11744/api/v1/health or an equivalent route check.",
+        "Uses HATCHET_CLIENT_SERVER_URL and HATCHET_CLIENT_TLS_STRATEGY overrides for profile creation and read-only commands."
+      ]
+    }
+  ]
+}
