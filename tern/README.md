@@ -5,6 +5,7 @@ Plugins for [Tern](https://docs.stencil.so/tern/).
 | Plugin | What it does |
 | --- | --- |
 | [`overseer/`](overseer/) | Projects panel for local Git repositories and [Worktrunk](https://worktrunk.dev) worktrees. Each worktree gets its own Tern session. |
+| [`review-queue/`](review-queue/) | Pull requests requesting your review, refreshed every two minutes through the GitHub CLI. |
 
 ## Install
 
@@ -26,3 +27,22 @@ Uninstall:
 ```
 
 Removing the plugin leaves your worktrees and open sessions alone.
+
+## Review Queue
+
+Requires the GitHub CLI (`gh`) on the host running your panes, signed in with `gh auth login`.
+The plugin is the official [Tern SDK example](https://docs.stencil.so/tern/examples/review-queue.md).
+
+```sh
+/Applications/Tern.app/Contents/MacOS/tern plugin link ~/code/harness/tern/review-queue
+```
+
+Press **Cmd+Option+Shift+R**, or run **Open review queue** from the palette.
+Use **j/k** or the arrow keys to move, **Enter** to open a PR, **r** to refresh,
+and **d** to toggle drafts. Drafts are hidden initially.
+
+To remove it:
+
+```sh
+/Applications/Tern.app/Contents/MacOS/tern plugin unlink review-queue
+```
