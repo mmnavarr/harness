@@ -44,23 +44,28 @@ local function git(path, args, done)
 	run(argv, done)
 end
 
-local function resolve_wt()
+local function find_executable(name)
 	-- Match executable-name lookup without invoking the user's shell or its hooks.
 	local path = tern.getenv("PATH") or ""
 	for directory in string.gmatch(path .. ":", "(.-):") do
 		if string.sub(directory, 1, 1) == "/" then
-			local candidate = directory .. "/wt"
+			local candidate = directory .. "/" .. name
 			if tern.fs.exists(candidate) then
 				return candidate
 			end
 		end
 	end
-	for _, candidate in ipairs({ "/opt/homebrew/bin/wt", "/usr/local/bin/wt" }) do
+	for _, candidate in ipairs({ "/opt/homebrew/bin/" .. name, "/usr/local/bin/" .. name }) do
 		if tern.fs.exists(candidate) then
 			return candidate
 		end
 	end
-	error("Worktrunk (wt) was not found. Install it and make wt available on Tern's PATH.", 0)
+	return nil
+end
+
+local function resolve_wt()
+	return find_executable("wt")
+		or error("Worktrunk (wt) was not found. Install it and make wt available on Tern's PATH.", 0)
 end
 
 local function primary_checkout(porcelain)
@@ -406,6 +411,82 @@ function M.removal_command(project, worktree, receipt)
 		error("The primary checkout cannot be deleted.", 0)
 	end
 	return operation_command("remove", project, worktree.path, worktree.branch or "", receipt)
+end
+
+-- "git@github.com:owner/repo.git", "https://github.com/owner/repo", "ssh://git@github.com/owner/repo.git"
+local function github_repo(url)
+	local owner, name = string.match(url, "github%.com[:/]([^/]+)/([^/]+)$")
+	if not owner then return nil end
+	name = string.gsub(name, "%.git$", "")
+	return owner, name
+end
+
+local PR_FIELDS = "nodes { ... on PullRequest { number state isDraft url updatedAt headRefName } }"
+
+-- Several PRs can share a head branch (reopened, recreated). Prefer an open
+-- one; otherwise the most recently updated. GitHub's `head:` search can also
+-- match by prefix, so require an exact branch name.
+local function pick_pr(nodes, branch)
+	local best
+	for _, pr in nodes or {} do
+		if type(pr) == "table" and pr.headRefName == branch and type(pr.number) == "number" then
+			local open = pr.state == "OPEN"
+			local best_open = best and best.state == "OPEN"
+			if not best or (open and not best_open) or (open == best_open and (pr.updatedAt or "") > (best.updatedAt or "")) then
+				best = pr
+			end
+		end
+	end
+	if not best then return nil end
+	local state = if best.state == "MERGED" then "merged"
+		elseif best.state == "CLOSED" then "closed"
+		elseif best.isDraft then "draft"
+		else "open"
+	return { number = best.number, state = state, url = best.url }
+end
+
+-- Looks up the pull request for each branch with one GitHub GraphQL request,
+-- through the user's authenticated `gh`. Matches by head branch name, so PRs
+-- whose branch was deleted after merging are still found.
+-- done(map of branch -> { number, state = draft|open|merged|closed, url }, err, cx)
+-- An empty map means "nothing to show" (no branches or not a GitHub repository).
+function M.pull_requests(project, branches, done)
+	local gh = find_executable("gh")
+	if not gh then
+		deferred_error(done, "GitHub CLI (gh) was not found")
+		return
+	end
+	git(project.path, { "remote", "get-url", "origin" }, function(remote, err, cx)
+		if not remote then done(nil, err, cx); return end
+		local owner, name = github_repo(output_line(remote.stdout))
+		if remote.status ~= 0 or not owner or #branches == 0 then done({}, nil, cx); return end
+		local declarations, fields = {}, {}
+		local argv = { gh, "api", "graphql" }
+		for index, branch in ipairs(branches) do
+			-- Search strings travel as GraphQL variables: branch names need no escaping.
+			table.insert(declarations, "$q" .. index .. ": String!")
+			table.insert(fields, "b" .. index .. ": search(query: $q" .. index .. ", type: ISSUE, first: 10) { " .. PR_FIELDS .. " }")
+			table.insert(argv, "-f")
+			table.insert(argv, "q" .. index .. "=repo:" .. owner .. "/" .. name .. " is:pr head:" .. branch)
+		end
+		table.insert(argv, "-f")
+		table.insert(argv, "query=query(" .. table.concat(declarations, ", ") .. ") { " .. table.concat(fields, " ") .. " }")
+		run(argv, function(result, run_err, next_cx)
+			if not result then done(nil, run_err, next_cx); return end
+			if result.status ~= 0 then done(nil, command_error("GitHub lookup failed", result), next_cx); return end
+			local ok, value = pcall(tern.json.decode, result.stdout)
+			if not ok or type(value) ~= "table" or type(value.data) ~= "table" then
+				done(nil, "GitHub returned an unexpected response", next_cx)
+				return
+			end
+			local found = {}
+			for index, branch in ipairs(branches) do
+				local hits = value.data["b" .. index]
+				found[branch] = pick_pr(type(hits) == "table" and hits.nodes or nil, branch)
+			end
+			done(found, nil, next_cx)
+		end)
+	end)
 end
 
 return M

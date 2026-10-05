@@ -102,6 +102,7 @@ local function model(cx)
 			local item = table.clone(worktree)
 			item.deleting = removing(worktree.path)
 			item.displayName = names[project.id] and names[project.id][worktree.path]
+			item.pr = not worktree.is_main and worktree.branch and entry.prs and entry.prs[worktree.branch] or nil
 			local session = boundSession(worktree.path, sessions)
 			item.session, item.tabs = session, session and tabs[tostring(session.id)] or {}
 			if session and session.id == current.id then result.activePath = worktree.path end
@@ -131,6 +132,33 @@ local function redraw(cx)
 	end
 end
 
+local PR_REFRESH_MS = 120000
+
+-- Pull request badges are best-effort: without gh, GitHub access, or a GitHub
+-- origin they simply don't appear. Stale results stay visible until a lookup
+-- succeeds again.
+local function refreshPullRequests(project, entry)
+	local branches = {}
+	for _, tree in entry.worktrees do
+		if tree.branch and not tree.is_main then table.insert(branches, tree.branch) end
+	end
+	table.sort(branches)
+	local key = table.concat(branches, "\0")
+	if entry.prLoading then return end
+	if key == entry.prKey and entry.prAt and tern.now() - entry.prAt < PR_REFRESH_MS then return end
+	entry.prLoading = true
+	wt.pull_requests(project, branches, function(found, err, cx)
+		entry.prLoading, entry.prAt = false, tern.now()
+		if found then
+			entry.prs, entry.prKey, entry.prError = found, key, nil
+		elseif err ~= entry.prError then
+			entry.prError = err
+			tern.log.warn("Pull requests unavailable for " .. project.name .. ": " .. tostring(err))
+		end
+		if cx then redraw(cx) end
+	end)
+end
+
 local function refresh(cx)
 	lastRefresh = tern.now()
 	for _, project in projects() do
@@ -145,6 +173,7 @@ local function refresh(cx)
 				entry.loading, entry.error = false, err
 				if worktrees then entry.worktrees = worktrees end
 				if nextCx then redraw(nextCx) end
+				if worktrees then refreshPullRequests(project, entry) end
 			end)
 		end
 	end
@@ -647,7 +676,11 @@ tern.on("canvas_action", function(ev, cx)
 	end
 	if not requireLocal(cx) then return true end
 	if ev.act == "add" then openForm(cx, "project")
-	elseif ev.act == "refresh" then problem, message = nil, nil; refresh(cx)
+	elseif ev.act == "refresh" then
+		problem, message = nil, nil
+		-- An explicit refresh also re-checks pull requests immediately.
+		for _, entry in cache do entry.prAt = nil end
+		refresh(cx)
 	elseif ev.act == "collapse" then collapsed[ev.value] = not collapsed[ev.value]; redraw(cx)
 	elseif ev.act == "create" then
 		local project = projectById(ev.value)

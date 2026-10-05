@@ -30,6 +30,13 @@ local function button(key, label, action, title, role)
 	})
 end
 
+local PR_STATES = {
+	draft = { role = "overseer.prDraft", label = "Draft" },
+	open = { role = "overseer.prOpen", label = "Open" },
+	merged = { role = "overseer.prMerged", label = "Merged" },
+	closed = { role = "overseer.prClosed", label = "Closed" },
+}
+
 local function dot(key, role)
 	return ui.el("div", { key = key, role = role })
 end
@@ -64,6 +71,14 @@ local function worktreeNode(worktree, activePath)
 		table.insert(head, text("deleting", "deleting", "overseer.badgeWarn"))
 	elseif not worktree.session then
 		table.insert(head, text("open", "Open", "overseer.openHint"))
+	end
+	local pr = worktree.pr and PR_STATES[worktree.pr.state]
+	if pr then
+		local summary = "#" .. tostring(worktree.pr.number) .. " · " .. pr.label
+		table.insert(head, ui.el("button", {
+			key = "pr", role = pr.role, title = summary .. " — open on GitHub", href = worktree.pr.url,
+			aria = "Pull request " .. summary, actions = { click = "open" },
+		}))
 	end
 	-- A renamed row keeps its branch visible; otherwise the directory helps
 	-- tell apart worktrees whose branch names share a long ticket prefix.

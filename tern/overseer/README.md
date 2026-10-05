@@ -4,7 +4,7 @@ A native Tern Projects navigator backed by Worktrunk. Projects point at local Gi
 
 ## Install
 
-Requires desktop Tern with the sessions/canvas APIs (verified with 0.4.5), Git, Bash, and Worktrunk (`wt`, verified with 0.40.0).
+Requires desktop Tern with the sessions/canvas APIs (verified with 0.4.5), Git, Bash, and Worktrunk (`wt`, verified with 0.40.0). Pull request badges also need the [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login`; without it the panel works and simply shows no badges.
 
 From this directory:
 
@@ -30,6 +30,12 @@ Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unic
 The navigator is a native pane, not an application-wide sidebar. It opens to the left of the first terminal of a new worktree session, using approximately one-third of the width (rounded to Tern's resize increment). It is not duplicated into every tab. The shortcut returns to that session's existing navigator, even from another tab. Resize its divider using Tern's normal controls; reopening Projects or switching worktrees preserves that session's adjusted width.
 
 **Display names** change only the Projects row, not the Git branch, worktree directory, or Tern session name. For example, keep branch `ALL-2456` and label its row `Fix onboarding`. Set one when creating the worktree, or later with **Rename**. A name given at creation is applied once Worktrunk has created the worktree, even if setup hooks later fail; a rename made while setup is still running takes precedence. Hover the row to see its branch and full path. Names are saved per project/worktree and survive refreshes, session closure, and restarts. Clear the display-name field and save to restore the branch label. Successful deletion through Overseer removes the saved name too.
+
+**Pull request badges** appear at the right end of a worktree's row when its branch has a GitHub pull request. They use GitHub's own Octicons and colours: grey draft, green open, purple merged, red closed. Hover for the number and state ("#2435 · Merged"); click to open the PR, following Tern's link setting. If a branch has several PRs, the open one wins, otherwise the most recently updated. PRs are matched by branch name, so merged PRs still show after GitHub deletes their branch. The primary checkout and branches without a PR show no badge.
+
+Each project makes one request through your signed-in `gh`, in the background, at most every 2 minutes, and right away when worktrees are added or removed or you click **↻**. Only projects whose `origin` is on github.com are checked. If a lookup fails (offline, signed out), the last known badges stay; the error is written to Tern's log.
+
+The icons are [Primer Octicons](https://primer.style/octicons/) (MIT, `icons/LICENSE`). Tern plugin stylesheets can't load image files, so `icons/generate-css.py` embeds them in `pr-icons.css`; rerun it after replacing an SVG.
 
 ## Creation and trust
 
@@ -78,9 +84,10 @@ This plugin manages **local repositories**. It does not clone repositories, dele
 ## Implementation
 
 - `window.luau`: project registry, async discovery, session ownership, confirmation actions, forms, and lifecycle jobs.
-- `worktrunk.luau`: Git/Worktrunk discovery, validation, and shell-safe operation commands.
+- `worktrunk.luau`: Git/Worktrunk discovery, validation, shell-safe operation commands, and the GitHub pull request lookup.
 - `worktree-operation.sh`: interactive creation/removal and atomic completion receipts.
-- `view.luau`, `styles.css`: native project/worktree/tab hierarchy.
+- `view.luau`, `styles.css`, `pr-icons.css` (generated): native project/worktree/tab hierarchy and PR badges.
+- `icons/`: Primer Octicons, their license, and `generate-css.py`.
 - `host.luau`, `input.luau`: native forms and Unicode-aware text editing.
 
 ## Verification
