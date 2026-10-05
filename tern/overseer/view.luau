@@ -123,7 +123,7 @@ function View.render(model)
 			ui.node("row", { key = "titleGroup", role = "overseer.titleGroup", grow = 1 }, {
 				text("title", "Projects", "overseer.heading"),
 				ui.el("button", {
-					key = "help", text = "i", role = "overseer.infoButton",
+					key = "help", role = "overseer.infoButton",
 					title = "How Projects works", aria = "How Projects works",
 					actions = { click = "help" },
 				}),

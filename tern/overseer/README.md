@@ -23,7 +23,7 @@ If `tern` is on your PATH, `tern plugin link "$PWD"` is equivalent. Linking relo
 5. After creation, return to Projects and select the new worktree. Review the setup terminal's output before closing it; Enter ends the helper after review.
 6. Right-click a worktree for **Rename**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch.
 
-Click the **(i)** button immediately after the **Projects** heading to open this guide in a rendered Markdown tab. Its tooltip is **How Projects works**. The button reads the README bundled with the installed plugin, so it works offline and when you share or copy the plugin to another machine.
+Click the info icon immediately after the **Projects** heading to open this guide in a rendered Markdown tab. Its tooltip is **How Projects works**. The button reads the README bundled with the installed plugin, so it works offline and when you share or copy the plugin to another machine.
 
 Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unicode text. Validation failures leave the form editable. **Refresh** discovers externally created/removed worktrees; an open navigator also refreshes every 15 seconds.
 
@@ -35,7 +35,7 @@ The navigator is a native pane, not an application-wide sidebar. It opens to the
 
 Each project makes one request through your signed-in `gh`, in the background, at most every 2 minutes, and right away when worktrees are added or removed or you click **↻**. Only projects whose `origin` is on github.com are checked. If a lookup fails (offline, signed out), the last known badges stay; the error is written to Tern's log.
 
-The icons are [Primer Octicons](https://primer.style/octicons/) (MIT, `icons/LICENSE`). Tern plugin stylesheets can't load image files, so `icons/generate-css.py` embeds them in `pr-icons.css`; rerun it after replacing an SVG.
+The pull request and info icons are [Primer Octicons](https://primer.style/octicons/) (MIT, `icons/LICENSE`). Tern plugin stylesheets can't load image files, so `icons/generate-css.py` embeds them in `icons.css`; rerun it after replacing an SVG.
 
 ## Creation and trust
 
@@ -86,7 +86,7 @@ This plugin manages **local repositories**. It does not clone repositories, dele
 - `window.luau`: project registry, async discovery, session ownership, confirmation actions, forms, and lifecycle jobs.
 - `worktrunk.luau`: Git/Worktrunk discovery, validation, shell-safe operation commands, and the GitHub pull request lookup.
 - `worktree-operation.sh`: interactive creation/removal and atomic completion receipts.
-- `view.luau`, `styles.css`, `pr-icons.css` (generated): native project/worktree/tab hierarchy and PR badges.
+- `view.luau`, `styles.css`, `icons.css` (generated): native project/worktree/tab hierarchy, PR badges, and the info icon.
 - `icons/`: Primer Octicons, their license, and `generate-css.py`.
 - `host.luau`, `input.luau`: native forms and Unicode-aware text editing.
 

@@ -6,7 +6,7 @@ description = "Projects, Worktrunk worktrees, and dedicated Tern sessions."
 icon = "branch"
 host = "host.luau"
 window = "window.luau"
-styles = ["styles.css", "pr-icons.css"]
+styles = ["styles.css", "icons.css"]
 
 [[blocks]]
 id = "form"

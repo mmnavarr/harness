@@ -20,27 +20,21 @@
 }
 [data-role='overseer.titleGroup'] {
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
+/* Octicon info-16, drawn at 14px. The image itself lives in icons.css (generated). */
 [data-role='overseer.infoButton'] {
-  width: 22px;
-  height: 22px;
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
   padding: 0;
-  border: 1px solid var(--t3);
+  border: 0;
   border-radius: 50%;
-  background: transparent;
-  color: var(--t2);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  text-align: center;
-  line-height: 20px;
   cursor: pointer;
-}
-[data-role='overseer.infoButton']:hover,
-[data-role='overseer.infoButton']:focus-visible {
-  color: var(--accent);
-  border-color: var(--accent);
+  background-color: transparent;
+  background-size: 14px 14px;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 [data-role='overseer.project'] {
   gap: 4px;
@@ -174,7 +168,7 @@
 [data-role='overseer.worktree']:hover [data-role='overseer.openHint'] {
   opacity: 1;
 }
-/* GitHub pull request state. Icons and colours live in pr-icons.css (generated). */
+/* GitHub pull request state. Icons and colours live in icons.css (generated). */
 [data-role='overseer.prDraft'],
 [data-role='overseer.prOpen'],
 [data-role='overseer.prMerged'],
