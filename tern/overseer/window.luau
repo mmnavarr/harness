@@ -4,6 +4,8 @@ local view = require("./view")
 
 local cache = {}
 local inflight = {}
+-- Helper liveness probes: job id -> true while `kill -0` runs; dead[id] once it failed.
+local probing, dead = {}, {}
 local rendered = {}
 local collapsed = {}
 local confirmation
@@ -347,7 +349,7 @@ local function confirmWorktreeAction(cx, id)
 			if not terminal then failed(launchCx, "Could not open the removal terminal."); return end
 			jobs[jobId] = {
 				kind = "remove", project = project.id, path = worktree.path, branch = worktree.branch,
-				label = request.label, receipt = receipt, pane = terminal,
+				label = request.label, receipt = receipt, pane = terminal, started = os.time(),
 				session = records("sessions")[worktree.path],
 			}
 			tern.kv.set("jobs", jobs)
@@ -458,7 +460,10 @@ local function createWorktree(cx, pane, request, response)
 		if not terminal then rejectForm(nextCx, pane, "Could not open the creation terminal."); return end
 		local tab = nextCx.session:tab_of(terminal)
 		if tab then nextCx.layout:name_tab(tab, "Create: " .. response.branch) end
-		jobs[id] = { kind = "create", project = project.id, branch = response.branch, receipt = receipt, pane = terminal }
+		jobs[id] = {
+			kind = "create", project = project.id, branch = response.branch,
+			receipt = receipt, pane = terminal, started = os.time(),
+		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
 		problem, message = nil, "Creating " .. response.branch .. ". Approve hooks and review output in its setup terminal."
@@ -515,6 +520,28 @@ local function forms(cx)
 	end
 end
 
+-- The helper's receipt is the only authority on an operation's outcome. A
+-- terminal that looks closed or missing is just a hint: Tern can misreport a
+-- pane while its program keeps running in the session daemon. Report failure
+-- only once the helper process is confirmed gone without writing a receipt.
+local function helperFailed(id, job)
+	if dead[id] then return true end
+	if probing[id] then return false end
+	local pidFile = job.receipt .. ".pid"
+	if not tern.fs.exists(pidFile) then
+		-- Allow the login shell time to start the helper before it writes its PID.
+		return os.time() - (job.started or 0) >= 30
+	end
+	local pid = tonumber(tern.fs.read(pidFile))
+	if not pid then return true end
+	probing[id] = true
+	tern.process.run({ "/bin/kill", "-0", tostring(pid) }, { timeout_ms = 5000 }, function(result)
+		probing[id] = nil
+		if result and result.status ~= 0 then dead[id] = true end
+	end)
+	return false
+end
+
 local function checkJobs(cx)
 	local jobs = records("jobs")
 	local changed = false
@@ -527,10 +554,12 @@ local function checkJobs(cx)
 				tern.fs.remove(job.receipt)
 			else
 				local pane = cx.session:pane(job.pane)
-				if not pane or pane.exited ~= nil or pane.error then status = -1 end
+				if (not pane or pane.exited ~= nil or pane.error) and helperFailed(id, job) then status = -1 end
 			end
 			if status ~= nil then
 				jobs[id], changed = nil, true
+				probing[id], dead[id] = nil, nil
+				if tern.fs.exists(job.receipt .. ".pid") then tern.fs.remove(job.receipt .. ".pid") end
 				if job.kind == "remove" then
 					if status == 0 and not tern.fs.exists(job.path) then
 						local names = records("worktree-names")

@@ -45,6 +45,8 @@ Creation preserves the terminal's stdin/stdout/stderr. Overseer never supplies `
 
 “Worktree created” means the Worktrunk command returned zero, **not** that every setup task succeeded. Hooks can warn and exit zero, and background hooks can still be running. Some project setup scripts deliberately return zero on partial failures; review their warnings. A nonzero command status is surfaced in Projects, and partially created worktrees remain discoverable.
 
+The outcome comes from a receipt the helper writes when it finishes, not from the terminal's state. If Tern stops reporting the setup terminal while the helper is still running (for example, after a window restart), Overseer checks the helper's process and keeps waiting. It reports a failure only when that process is gone without having written a receipt.
+
 Arguments are encoded before entering the login shell and decoded only inside Bash, then passed as quoted arguments. Unicode, spaces in paths, quotes, dollar signs, and semicolons are not evaluated as shell code. Creation was exercised through both zsh and Nushell.
 
 ## Close and delete

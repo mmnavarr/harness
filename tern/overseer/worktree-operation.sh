@@ -52,6 +52,9 @@ on_exit() {
     if [ -n "$receipt_tmp" ]; then
         /bin/rm -f "$receipt_tmp"
     fi
+    # Only after the receipt: Overseer treats a missing PID file plus a missing
+    # receipt as a helper that never started.
+    /bin/rm -f "${receipt}.pid"
     exit "$status"
 }
 
@@ -62,6 +65,8 @@ trap 'exit 129' HUP
 
 # Check receipt writability before creating anything. mktemp uses mode 0600.
 receipt_tmp=$(/usr/bin/mktemp "${receipt}.tmp.XXXXXX") || exit 73
+# Overseer checks this PID before treating a vanished terminal as a failure.
+printf '%s\n' "$$" > "${receipt}.pid" || exit 73
 
 remove_worktree() {
     # Recheck identity and cleanliness immediately before handing off to wt.

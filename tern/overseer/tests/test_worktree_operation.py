@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -82,6 +83,31 @@ class WorktreeOperationTests(unittest.TestCase):
             '[projects."github.com/overseer-tests/fixture"]\n'
             "approved-commands = [" + json.dumps(command) + "]\n"
         )
+
+    def test_running_helper_publishes_its_pid_until_the_receipt_is_written(self):
+        # Overseer must not report failure while this PID is alive, even if
+        # Tern stops reporting the operation's terminal.
+        release = self.repo / ".git" / "release"
+        self.hook('while [ ! -e "$(git rev-parse --git-common-dir)/release" ]; do sleep 0.05; done')
+        path, branch = self.worktree()
+        receipt = self.root / "completion.status"
+        pid_file = self.root / "completion.status.pid"
+        helper = subprocess.Popen(
+            ["/bin/bash", str(HELPER), "remove", WT, str(self.repo), str(path), branch, str(receipt)],
+            cwd=self.repo, env=self.env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        self.addCleanup(lambda: helper.poll() is None and helper.kill())
+        deadline = time.monotonic() + 15
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(pid_file.read_text().strip(), str(helper.pid))
+        self.assertFalse(receipt.exists())
+        release.touch()
+        output, _ = helper.communicate(timeout=30)
+        self.assertEqual(helper.returncode, 0, output)
+        self.assertEqual(receipt.read_text(), "0\n")
+        self.assertFalse(pid_file.exists())
 
     def test_removal_runs_hook_keeps_unmerged_branch_and_deletes_ignored_files(self):
         self.hook('printf removed > "$(git rev-parse --git-common-dir)/removed-marker"')
