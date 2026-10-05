@@ -19,7 +19,7 @@ If `tern` is on your PATH, `tern plugin link "$PWD"` is equivalent. Linking relo
 1. Press **Cmd+Option+Shift+P**, or run **Open Projects** from Tern's command palette.
 2. Click **+ Add** in the Projects header. Enter a checkout directory, optionally a display name and a local base branch. `~/` paths and linked checkouts work; duplicate repositories are detected by their canonical shared Git directory.
 3. Click a worktree to open its session. Each worktree is shown as a group: its name, a subtitle (the branch when renamed, otherwise the directory), and its open tabs beneath. The active session's whole group is highlighted. A filled green dot means a session is open, a hollow dot means none, and amber marks running tabs or a deletion in progress. Click an indented tab to focus it. New tabs in a managed session start at its worktree root.
-4. Click **+ New worktree** beside a project. Enter a new branch name. A separate **Create: …** terminal shows Worktrunk's approval prompt and setup output.
+4. Click **+ New worktree** beside a project. Enter a new branch name and, optionally, a **Display name** (Tab moves to it). A separate **Create: …** terminal shows Worktrunk's approval prompt and setup output.
 5. After creation, return to Projects and select the new worktree. Review the setup terminal's output before closing it; Enter ends the helper after review.
 6. Right-click a worktree for **Rename**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch.
 
@@ -29,7 +29,7 @@ Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unic
 
 The navigator is a native pane, not an application-wide sidebar. It opens to the left of the first terminal of a new worktree session, using approximately one-third of the width (rounded to Tern's resize increment). It is not duplicated into every tab. The shortcut returns to that session's existing navigator, even from another tab. Resize its divider using Tern's normal controls; reopening Projects or switching worktrees preserves that session's adjusted width.
 
-**Rename** changes only the Projects row, not the Git branch, worktree directory, or Tern session name. For example, keep branch `ALL-2456` and label its row `Fix onboarding`. Hover the row to see its branch and full path. Names are saved per project/worktree and survive refreshes, session closure, and restarts. Clear the display-name field and save to restore the branch label. Successful deletion through Overseer removes the saved name too.
+**Display names** change only the Projects row, not the Git branch, worktree directory, or Tern session name. For example, keep branch `ALL-2456` and label its row `Fix onboarding`. Set one when creating the worktree, or later with **Rename**. A name given at creation is applied once Worktrunk has created the worktree, even if setup hooks later fail; a rename made while setup is still running takes precedence. Hover the row to see its branch and full path. Names are saved per project/worktree and survive refreshes, session closure, and restarts. Clear the display-name field and save to restore the branch label. Successful deletion through Overseer removes the saved name too.
 
 ## Creation and trust
 

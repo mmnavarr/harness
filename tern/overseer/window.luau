@@ -438,9 +438,22 @@ local function addProject(cx, pane, response)
 	end)
 end
 
+-- Display names are single-line labels for the Projects panel; blank means
+-- "use the branch name".
+local function normalizeName(raw)
+	if raw == nil then return nil end
+	if type(raw) ~= "string" or raw:find("[%c]") then
+		return nil, "Use a single-line display name without control characters."
+	end
+	local name = raw:match("^%s*(.-)%s*$")
+	return if name == "" then nil else name
+end
+
 local function createWorktree(cx, pane, request, response)
 	local project = projectById(request.project)
 	if not project then rejectForm(cx, pane, "Project is no longer registered."); return end
+	local displayName, nameError = normalizeName(response.name)
+	if nameError then rejectForm(cx, pane, nameError); return end
 	wt.validate(project, response.branch, function(ok, err, nextCx)
 		if not nextCx then return end
 		if not nextCx.session:pane(pane) then finishForm(nextCx, pane); return end
@@ -461,12 +474,12 @@ local function createWorktree(cx, pane, request, response)
 		local tab = nextCx.session:tab_of(terminal)
 		if tab then nextCx.layout:name_tab(tab, "Create: " .. response.branch) end
 		jobs[id] = {
-			kind = "create", project = project.id, branch = response.branch,
+			kind = "create", project = project.id, branch = response.branch, displayName = displayName,
 			receipt = receipt, pane = terminal, started = os.time(),
 		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
-		problem, message = nil, "Creating " .. response.branch .. ". Approve hooks and review output in its setup terminal."
+		problem, message = nil, "Creating " .. (displayName or response.branch) .. ". Approve hooks and review output in its setup terminal."
 		redraw(nextCx)
 	end)
 end
@@ -477,17 +490,38 @@ local function renameWorktree(cx, pane, request, response)
 		rejectForm(cx, pane, "Worktree is no longer available. Refresh Projects."); return
 	end
 	if removing(request.path) then rejectForm(cx, pane, "This worktree is being deleted."); return end
-	if type(response.name) ~= "string" or response.name:find("[%c]") then
-		rejectForm(cx, pane, "Use a single-line display name without control characters."); return
-	end
-	local name = response.name:match("^%s*(.-)%s*$")
+	local name, nameError = normalizeName(response.name)
+	if nameError then rejectForm(cx, pane, nameError); return end
 	local names = records("worktree-names")
 	names[project.id] = names[project.id] or {}
-	names[project.id][worktree.path] = if name == "" then nil else name
+	names[project.id][worktree.path] = name
 	tern.kv.set("worktree-names", names)
 	finishForm(cx, pane)
-	problem, message = nil, if name == "" then "Restored the branch label." else "Display name saved. Git branch and directory unchanged."
+	problem, message = nil, if name == nil then "Restored the branch label." else "Display name saved. Git branch and directory unchanged."
 	redraw(cx)
+end
+
+-- The worktree's path is only known once Worktrunk has created it, so the
+-- display name chosen at creation is attached afterwards, by branch.
+local function applyCreatedName(job)
+	local project = projectById(job.project)
+	if not job.displayName or not project then return end
+	wt.list(project, function(trees, _err, cx)
+		if not trees or not cx then return end
+		for _, tree in trees do
+			if tree.branch == job.branch and not tree.is_main then
+				local names = records("worktree-names")
+				names[project.id] = names[project.id] or {}
+				-- A rename made while setup ran wins over the name typed at creation.
+				if names[project.id][tree.path] == nil then
+					names[project.id][tree.path] = job.displayName
+					tern.kv.set("worktree-names", names)
+					redraw(cx)
+				end
+				return
+			end
+		end
+	end)
 end
 
 local function forms(cx)
@@ -578,12 +612,17 @@ local function checkJobs(cx)
 					else
 						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; review the removal terminal.")
 					end
-				elseif status == 0 then
-					problem, message = nil, "Created " .. job.branch .. ". Review setup warnings in its terminal, then select the worktree here."
-					cx:toast("info", "Worktree created: " .. job.branch, "Setup may have warnings; review its terminal output.")
 				else
-					problem, message = "Creation did not finish successfully for " .. job.branch .. ". Check its setup terminal; a partially created worktree may still be listed.", nil
-					cx:toast("error", "Worktree creation needs attention", job.branch)
+					-- Applied on failure too: a partially created worktree keeps its label.
+					applyCreatedName(job)
+					local label = job.displayName or job.branch
+					if status == 0 then
+						problem, message = nil, "Created " .. label .. ". Review setup warnings in its terminal, then select the worktree here."
+						cx:toast("info", "Worktree created: " .. label, "Setup may have warnings; review its terminal output.")
+					else
+						problem, message = "Creation did not finish successfully for " .. label .. ". Check its setup terminal; a partially created worktree may still be listed.", nil
+						cx:toast("error", "Worktree creation needs attention", label)
+					end
 				end
 			end
 		end

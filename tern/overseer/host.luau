@@ -6,7 +6,7 @@ local function text(key, value, role)
 end
 
 local function fieldOrder(state)
-	return if state.mode == "project" then { "path", "name", "base" } elseif state.mode == "rename" then { "name" } else { "branch" }
+	return if state.mode == "project" then { "path", "name", "base" } elseif state.mode == "rename" then { "name" } else { "branch", "name" }
 end
 
 local function focus(state, cx)
@@ -37,9 +37,10 @@ local function finish(state, cancelled)
 	else
 		if not string.find(state.fields.branch.text, "%S") then
 			state.error = "Enter a branch name."
+			state.focus = "branch"
 			return
 		end
-		response = { mode = "create", branch = state.fields.branch.text }
+		response = { mode = "create", branch = state.fields.branch.text, name = state.fields.name.text }
 	end
 	local ok, err = pcall(tern.kv.set, "form:" .. state.token, response)
 	if not ok then
@@ -104,6 +105,8 @@ tern.block.define("form", {
 			local placeholders = { path = "/path/to/repository", name = "Repository name", base = "master", branch = "feature/branch-name" }
 			if state.mode == "rename" then
 				labels.name, placeholders.name = "Display name (optional)", state.project
+			elseif state.mode == "create" then
+				labels.name, placeholders.name = "Display name (optional)", "e.g. Fix onboarding"
 			end
 			for _, name in ipairs(fieldOrder(state)) do
 				table.insert(children, text(name .. "Label", labels[name], "overseer.fieldLabel"))
