@@ -52,13 +52,29 @@ local function worktreeNode(worktree, activePath)
 	local menu = {}
 	if not worktree.deleting then
 		table.insert(menu, "rename")
+		-- Plain-text actions appear verbatim in the menu.
+		if not worktree.is_main then
+			table.insert(menu, if worktree.iced then "Remove from Ice Box" else "Add to Ice Box")
+		end
 		if worktree.session then table.insert(menu, "close-session") end
 		if not worktree.is_main then table.insert(menu, "delete-worktree") end
 	end
-	local status = if worktree.deleting then "overseer.dotBusy"
-		elseif worktree.session then "overseer.dotOpen" else "overseer.dotIdle"
+	local status
+	if worktree.iced then
+		status = text("status", "🧊", "overseer.iceMark", { title = "In the Ice Box" })
+	else
+		local role, title = "overseer.dotIdle", "No session"
+		if worktree.deleting then
+			role, title = "overseer.dotBusy", "Deleting"
+		elseif worktree.agentWorking then
+			role, title = "overseer.dotAgent", "Agent working"
+		elseif worktree.session then
+			role, title = "overseer.dotOpen", "Session open"
+		end
+		status = ui.el("div", { key = "status", role = role, title = title })
+	end
 	local head = {
-		dot("status", status),
+		status,
 		text("branch", label, "overseer.branch", { grow = 1 }),
 	}
 	if worktree.dirty then
@@ -87,7 +103,8 @@ local function worktreeNode(worktree, activePath)
 		else basename(worktree.path)
 	local summary = ui.node("col", {
 		key = "row", role = "overseer.worktreeRow", title = branch .. "\n" .. worktree.path,
-		aria = label .. (if worktree.session then ", session open" else ", open session"),
+		aria = label .. (if worktree.agentWorking then ", agent working" elseif worktree.session then ", session open" else ", open session")
+			.. (if worktree.iced then ", in the Ice Box" else ""),
 		actions = { click = if worktree.deleting then nil else "open=" .. worktree.path, menu = menu },
 	}, {
 		ui.node("row", { key = "head", role = "overseer.worktreeHead" }, head),
@@ -128,8 +145,11 @@ function View.render(model)
 					actions = { click = "help" },
 				}),
 			}),
-			button("add", "+ Add", "add", "Add an existing Git repository"),
+			button("add", "+", "add", "Add an existing Git repository", "overseer.iconButton"),
 			button("refresh", "↻", "refresh", "Refresh worktrees and sessions", "overseer.iconButton"),
+			button("icebox", "🧊", "toggle-icebox",
+				if model.showIcebox then "Hide Ice Box worktrees" else "Show Ice Box worktrees",
+				if model.showIcebox then "overseer.iconButtonOn" else "overseer.iconButton"),
 		}),
 	}
 	if model.confirmation then
@@ -173,9 +193,9 @@ function View.render(model)
 				button("collapse", (if collapsed then "▸  " else "▾  ") .. project.name,
 					"collapse=" .. project.id, (if collapsed then "Expand " else "Collapse ") .. project.name,
 					"overseer.projectToggle"),
-				text("count", tostring(#(project.worktrees or {})), "overseer.count"),
+				text("count", tostring(project.total), "overseer.count"),
 				ui.node("row", { key = "spacer", grow = 1 }, {}),
-				button("create", "+ New worktree", "create=" .. project.id, "Create a worktree from " .. project.base, "overseer.ghostButton"),
+				button("create", "New Worktree", "create=" .. project.id, "Create a worktree from " .. project.base),
 			}),
 			text("path", project.path, "overseer.projectPath", { title = project.path }),
 		}
@@ -189,7 +209,14 @@ function View.render(model)
 			for _, worktree in ipairs(project.worktrees or {}) do
 				table.insert(projectChildren, worktreeNode(worktree, model.activePath))
 			end
-			if not project.loading and not project.error and #(project.worktrees or {}) == 0 then
+			if project.hiddenIced > 0 then
+				-- In a row so the hint is only as wide as its text.
+				table.insert(projectChildren, ui.node("row", { key = "icedRow" }, {
+					button("iced", "🧊 " .. tostring(project.hiddenIced) .. " in the Ice Box",
+						"toggle-icebox", "Show Ice Box worktrees", "overseer.icedHint"),
+				}))
+			end
+			if not project.loading and not project.error and #(project.worktrees or {}) == 0 and project.hiddenIced == 0 then
 				table.insert(projectChildren, text("empty", "No worktrees found. Refresh to check this repository.", "overseer.hint"))
 			end
 		end

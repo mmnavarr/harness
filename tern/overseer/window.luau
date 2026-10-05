@@ -81,9 +81,54 @@ local function removing(path)
 	return false
 end
 
+-- Agent CLIs recognised in terminals, by program name.
+local AGENTS = {
+	omp = true, pi = true, claude = true, codex = true, opencode = true, gemini = true,
+	aider = true, amp = true, ["cursor-agent"] = true, crush = true, goose = true,
+}
+
+-- Whether a shell command line runs an agent CLI, e.g. "omp", "cd x && claude",
+-- "FOO=1 /usr/local/bin/codex --resume".
+local function runsAgent(line)
+	for segment in string.gmatch(line, "[^;&|]+") do
+		for word in string.gmatch(segment, "%S+") do
+			if not string.find(word, "=", 1, true) then
+				if AGENTS[string.match(word, "([^/]+)$")] then return true end
+				break
+			end
+		end
+	end
+	return false
+end
+
+-- Session ids (as strings) with an agent working right now. Agent CLIs in
+-- terminals report progress while a turn runs; Tern exposes that as `busy`
+-- (a CLI that hasn't reported progress yet counts as busy while it runs).
+-- Tern's own agent blocks report their state directly.
+local function workingSessions(cx)
+	local tabSession = {}
+	for _, tab in cx.session:tabs() do tabSession[tab.id] = tostring(tab.session) end
+	local working = {}
+	for _, pane in cx.session:panes() do
+		if pane.busy and pane.running and pane.tab and runsAgent(pane.running.line) then
+			working[tabSession[pane.tab] or ""] = true
+		end
+	end
+	for _, agent in cx.agents:list() do
+		if agent.state == "working" then
+			local info = cx.session:pane(agent.pane)
+			if info and info.tab then working[tabSession[info.tab] or ""] = true end
+		end
+	end
+	return working
+end
+
 local function model(cx)
 	local sessions = sessionsById(cx)
 	local names = records("worktree-names")
+	local icebox = records("icebox")
+	local showIcebox = tern.kv.get("show-icebox") ~= false
+	local working = workingSessions(cx)
 	local tabs = {}
 	for _, tab in cx.session:tabs() do
 		local key = tostring(tab.session)
@@ -92,14 +137,19 @@ local function model(cx)
 			id = tab.id, pane = tab.pane, name = tab.name or tab.title or "Terminal", busy = tab.busy,
 		})
 	end
-	local result = { projects = {}, collapsed = collapsed, message = message, error = problem, confirmation = confirmation }
+	local result = {
+		projects = {}, collapsed = collapsed, message = message, error = problem, confirmation = confirmation,
+		showIcebox = showIcebox,
+	}
 	local current = cx.sessions:current()
 	for _, project in projects() do
 		local entry = cache[project.id]
 		local row = {
 			id = project.id, name = project.name, path = project.path, base = project.base,
-			loading = not entry or entry.loading, error = entry and entry.error, worktrees = {},
+			loading = not entry or entry.loading, error = entry and entry.error, worktrees = {}, hiddenIced = 0,
+			total = entry and entry.worktrees and #entry.worktrees or 0,
 		}
+		local iced = {}
 		for _, worktree in (entry and entry.worktrees or {}) do
 			local item = table.clone(worktree)
 			item.deleting = removing(worktree.path)
@@ -107,9 +157,21 @@ local function model(cx)
 			item.pr = not worktree.is_main and worktree.branch and entry.prs and entry.prs[worktree.branch] or nil
 			local session = boundSession(worktree.path, sessions)
 			item.session, item.tabs = session, session and tabs[tostring(session.id)] or {}
-			if session and session.id == current.id then result.activePath = worktree.path end
-			table.insert(row.worktrees, item)
+			item.agentWorking = session ~= nil and working[tostring(session.id)] == true
+			local active = session ~= nil and session.id == current.id
+			if active then result.activePath = worktree.path end
+			item.iced = not worktree.is_main and icebox[project.id] ~= nil and icebox[project.id][worktree.path] == true
+			if not item.iced then
+				table.insert(row.worktrees, item)
+			elseif showIcebox or active then
+				-- The active worktree stays visible even while the Ice Box is hidden.
+				table.insert(iced, item)
+			else
+				row.hiddenIced += 1
+			end
 		end
+		-- Ice Box worktrees sink to the bottom, keeping their relative order.
+		for _, item in iced do table.insert(row.worktrees, item) end
 		table.insert(result.projects, row)
 	end
 	return result
@@ -723,6 +785,11 @@ local function checkJobs(cx)
 							names[job.project][job.path] = nil
 							tern.kv.set("worktree-names", names)
 						end
+						local icebox = records("icebox")
+						if icebox[job.project] then
+							icebox[job.project][job.path] = nil
+							tern.kv.set("icebox", icebox)
+						end
 						local closed, closeError = true, nil
 						if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
 						if closed then
@@ -779,6 +846,18 @@ tern.on("canvas_action", function(ev, cx)
 		local project = projectById(ev.value)
 		if project then openForm(cx, "create", project) end
 	elseif ev.act == "open" then openWorktree(cx, ev.value)
+	elseif ev.act == "Add to Ice Box" or ev.act == "Remove from Ice Box" then
+		-- Menu entries show their action verbatim, so these read as titled.
+		local project, worktree = findWorktree(view.worktreePath(ev.node))
+		if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return true end
+		local icebox = records("icebox")
+		icebox[project.id] = icebox[project.id] or {}
+		icebox[project.id][worktree.path] = if ev.act == "Add to Ice Box" then true else nil
+		tern.kv.set("icebox", icebox)
+		redraw(cx)
+	elseif ev.act == "toggle-icebox" then
+		tern.kv.set("show-icebox", tern.kv.get("show-icebox") == false)
+		redraw(cx)
 	elseif ev.act == "rename" then
 		local project, worktree = findWorktree(view.worktreePath(ev.node))
 		if project then openForm(cx, "rename", project, worktree)

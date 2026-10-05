@@ -68,10 +68,11 @@
 }
 /* A worktree and its tabs form one group, highlighted together when active. */
 [data-role='overseer.worktree'] {
-  gap: 1px;
-  padding: 4px;
+  gap: 0;
+  padding: 2px 4px;
   border: 1px solid transparent;
   border-radius: 10px;
+  font-size: 0.9em;
 }
 [data-role='overseer.worktree']:hover {
   background: color-mix(in srgb, var(--t4) 7%, transparent);
@@ -81,8 +82,8 @@
   border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 [data-role='overseer.worktreeRow'] {
-  gap: 2px;
-  padding: 6px 8px;
+  gap: 1px;
+  padding: 4px 8px;
   border-radius: 7px;
   cursor: pointer;
 }
@@ -102,7 +103,7 @@
   align-items: center;
   gap: 8px;
   margin-left: 16px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: 6px;
   color: var(--t2);
   font-size: 0.92em;
@@ -126,6 +127,7 @@
 [data-role='overseer.dotOpen'],
 [data-role='overseer.dotIdle'],
 [data-role='overseer.dotBusy'],
+[data-role='overseer.dotAgent'],
 [data-role='overseer.dotTab'] {
   width: 8px;
   height: 8px;
@@ -140,6 +142,31 @@
 }
 [data-role='overseer.dotBusy'] {
   background: var(--warn);
+}
+/* An agent is working in this worktree's session: the green dot pulses. */
+[data-role='overseer.dotAgent'] {
+  background: var(--ok);
+  animation: overseer-agent-pulse 1.6s ease-out infinite;
+}
+@keyframes overseer-agent-pulse {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent); }
+  to { box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-role='overseer.dotAgent'] {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 35%, transparent);
+  }
+}
+/* Ice Box worktrees show 🧊 in the dot's place. It is wider than the 8px dot;
+   the negative margins keep names aligned with the rows above. */
+[data-role='overseer.iceMark'] {
+  width: 14px;
+  min-width: 14px;
+  margin: 0 -3px;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
 }
 [data-role='overseer.dotTab'] {
   width: 6px;
@@ -195,8 +222,8 @@
 }
 [data-role='overseer.button'],
 [data-role='overseer.primaryButton'],
-[data-role='overseer.ghostButton'],
-[data-role='overseer.iconButton'] {
+[data-role='overseer.iconButton'],
+[data-role='overseer.iconButtonOn'] {
   color: var(--t2);
   background: transparent;
   border: 1px solid color-mix(in srgb, var(--t4) 30%, transparent);
@@ -206,21 +233,35 @@
   font: inherit;
   font-size: 0.9em;
 }
-[data-role='overseer.iconButton'] {
+[data-role='overseer.iconButton'],
+[data-role='overseer.iconButtonOn'] {
   padding: 4px 8px;
 }
-[data-role='overseer.ghostButton'] {
-  border-color: transparent;
-  color: var(--t3);
+/* A toggle that is on, e.g. Ice Box worktrees shown. */
+[data-role='overseer.iconButtonOn'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 [data-role='overseer.primaryButton'] {
   color: var(--accent);
   border-color: var(--accent);
 }
+[data-role='overseer.icedHint'] {
+  margin: 2px 0 0 12px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+}
 [data-role='overseer.button']:hover,
 [data-role='overseer.primaryButton']:hover,
-[data-role='overseer.ghostButton']:hover,
 [data-role='overseer.iconButton']:hover,
+[data-role='overseer.iconButtonOn']:hover,
+[data-role='overseer.icedHint']:hover,
 [data-role='overseer.projectToggle']:hover,
 [data-role='overseer.tabRow'].sf-act:hover {
   color: var(--t1);
