@@ -173,12 +173,6 @@ function View.render(model)
 			ui.node("row", { key = "buttons", role = "overseer.formButtons" }, buttons),
 		}))
 	end
-	if model.error then
-		table.insert(children, text("error", model.error, "overseer.error"))
-	end
-	if model.message then
-		table.insert(children, text("message", model.message, "overseer.message"))
-	end
 	if #model.projects == 0 then
 		table.insert(children, ui.node("col", { key = "empty", role = "overseer.empty" }, {
 			text("title", "Your repositories, in one place.", "overseer.emptyTitle"),

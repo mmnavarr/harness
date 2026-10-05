@@ -9,7 +9,6 @@ local probing, dead = {}, {}
 local rendered = {}
 local collapsed = {}
 local confirmation
-local message, problem
 local lastRefresh = -15000
 local sequence = 0
 -- Defined after forms(); openForm starts it.
@@ -44,8 +43,7 @@ local function requireLocal(cx)
 end
 
 local function report(cx, text)
-	problem, message = tostring(text), nil
-	cx:toast("error", "Overseer", problem)
+	cx:toast("error", "Overseer", tostring(text))
 end
 
 local function sessionsById(cx)
@@ -140,7 +138,7 @@ local function model(cx)
 		})
 	end
 	local result = {
-		projects = {}, collapsed = collapsed, message = message, error = problem, confirmation = confirmation,
+		projects = {}, collapsed = collapsed, confirmation = confirmation,
 		showIcebox = showIcebox,
 	}
 	local current = cx.sessions:current()
@@ -419,7 +417,6 @@ local function requestWorktreeAction(cx, kind, path)
 	if kind == "delete" and (worktree.is_main or path == project.path) then
 		report(cx, "The primary checkout cannot be deleted."); return
 	end
-	problem, message = nil, nil
 	confirmation = {
 		id = token(), kind = kind, path = path, label = worktree.branch or "Detached HEAD",
 		project = project.id, worktree = table.clone(worktree),
@@ -447,7 +444,7 @@ local function confirmWorktreeAction(cx, id)
 		confirmation = nil
 		local ok, err = closeManagedSession(cx, request.path)
 		if not ok then report(cx, err) else
-			problem, message = nil, "Closed session for " .. request.label .. ". Worktree files are unchanged."
+			cx:toast("info", "Session closed: " .. request.label, "Worktree files are unchanged.")
 			navigator(cx)
 		end
 		redraw(cx)
@@ -497,8 +494,8 @@ local function confirmWorktreeAction(cx, id)
 		}
 		tern.kv.set("jobs", jobs)
 		confirmation = nil
-		problem, message = nil, "Deleting " .. request.label .. " in the background. Output is in the “" .. tabName
-			.. "” tab; answer any hook approval prompt there."
+		nextCx:toast("info", "Deleting worktree: " .. request.label, "Output is in the “" .. tabName
+			.. "” tab; answer any hook approval prompt there.")
 		redraw(nextCx)
 	end)
 end
@@ -599,7 +596,7 @@ local function addProject(cx, pane, response)
 			table.insert(all, project)
 			tern.kv.set("projects", all)
 			finishForm(saveCx, pane)
-			problem, message = nil, "Added " .. project.name
+			saveCx:toast("info", "Project added: " .. project.name)
 			refresh(saveCx)
 		end
 		if response.base and response.base:match("%S") then
@@ -660,8 +657,8 @@ local function createWorktree(cx, pane, request, response)
 		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
-		problem, message = nil, "Creating " .. (displayName or response.branch) .. " in the background. Output is in the “"
-			.. tabName .. "” tab; answer any hook approval prompt there."
+		nextCx:toast("info", "Creating worktree: " .. (displayName or response.branch), "Output is in the “"
+			.. tabName .. "” tab; answer any hook approval prompt there.")
 		redraw(nextCx)
 	end)
 end
@@ -679,7 +676,8 @@ local function renameWorktree(cx, pane, request, response)
 	names[project.id][worktree.path] = name
 	tern.kv.set("worktree-names", names)
 	finishForm(cx, pane)
-	problem, message = nil, if name == nil then "Restored the branch label." else "Display name saved. Git branch and directory unchanged."
+	cx:toast("info", if name == nil then "Restored the branch label." else "Display name saved.",
+		"Git branch and directory unchanged.")
 	redraw(cx)
 end
 
@@ -793,6 +791,11 @@ local function checkJobs(cx)
 				local pane = cx.session:pane(job.pane)
 				if (not pane or pane.exited ~= nil or pane.error) and helperFailed(id, job) then status = -1 end
 			end
+			-- On success the output tab has served its purpose: close it (its helper is
+			-- only waiting for Enter). Failures keep it open with the error on screen,
+			-- including a deletion that reported success but left its directory.
+			local succeeded = status == 0 and (job.kind ~= "remove" or not tern.fs.exists(job.path))
+			if succeeded and cx.session:pane(job.pane) then cx.layout:close(job.pane) end
 			if status ~= nil then
 				jobs[id], changed = nil, true
 				probing[id], dead[id] = nil, nil
@@ -812,27 +815,23 @@ local function checkJobs(cx)
 						local closed, closeError = true, nil
 						if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
 						if closed then
-							problem, message = nil, "Deleted " .. job.label .. ". No Git branches were deleted."
 							cx:toast("info", "Worktree deleted: " .. job.label, "Git branches kept.")
 						else
 							report(cx, "Worktree deleted, but its session was left open: " .. tostring(closeError))
 						end
 					else
-						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; review the “"
-							.. (job.tab or "Delete: " .. job.label) .. "” tab.")
+						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; the “"
+							.. (job.tab or "Delete: " .. job.label) .. "” tab shows why.")
 					end
 				else
 					-- Applied on failure too: a partially created worktree keeps its label.
 					applyCreatedName(job)
 					local label = job.displayName or job.branch
 					if status == 0 then
-						problem, message = nil, "Created " .. label .. ". Review any setup warnings in the “"
-							.. (job.tab or "Create: " .. job.branch) .. "” tab, then select the worktree here."
-						cx:toast("info", "Worktree created: " .. label, "Setup may have warnings; review its terminal output.")
+						cx:toast("info", "Worktree created: " .. label, "Select it in Projects to open its session.")
 					else
-						problem, message = "Creation did not finish successfully for " .. label .. ". Check the “"
-							.. (job.tab or "Create: " .. job.branch) .. "” tab; a partially created worktree may still be listed.", nil
-						cx:toast("error", "Worktree creation needs attention", label)
+						cx:toast("error", "Worktree creation needs attention", "Creation did not finish successfully for " .. label .. ". The “"
+							.. (job.tab or "Create: " .. job.branch) .. "” tab shows why; a partially created worktree may still be listed.")
 					end
 				end
 			end
@@ -859,7 +858,6 @@ tern.on("canvas_action", function(ev, cx)
 	if not requireLocal(cx) then return true end
 	if ev.act == "add" then openForm(cx, "project")
 	elseif ev.act == "refresh" then
-		problem, message = nil, nil
 		-- An explicit refresh also re-checks pull requests immediately.
 		for _, entry in cache do entry.prAt = nil end
 		refresh(cx)
