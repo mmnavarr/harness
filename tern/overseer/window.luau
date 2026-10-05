@@ -385,14 +385,20 @@ local function closeManagedSession(cx, path, expected)
 	if err then return false, err end
 	if session then
 		if cx.sessions:current().id == session.id then
+			-- Land in the project's primary checkout session when it's open (it also
+			-- holds a deletion's output tab); otherwise any other session.
 			local replacement
+			local project = projectById(binding.project)
+			local primary = project and bindings[project.path]
 			for _, other in cx.sessions:list() do
-				if other.id ~= session.id and other.host == session.host then replacement = other; break end
+				if other.id ~= session.id and other.host == session.host then
+					if primary and other.id == primary.id then replacement = other; break end
+					replacement = replacement or other
+				end
 			end
 			if replacement then
 				cx.sessions:switch(replacement.id)
 			else
-				local project = projectById(binding.project)
 				cx.sessions:create({ name = "Projects", cwd = project and project.path })
 			end
 		end
@@ -419,6 +425,19 @@ local function requestWorktreeAction(cx, kind, path)
 		project = project.id, worktree = table.clone(worktree),
 	}
 	redraw(cx)
+end
+
+-- A session to keep a removal's output tab in when the worktree being removed
+-- is the current session: it closes on success, taking its tabs with it.
+-- Prefers the project's primary checkout session, then any other session.
+local function outputSession(cx, project, target)
+	local sessions = sessionsById(cx)
+	local primary = records("sessions")[project.path]
+	if primary and primary.id ~= target.id and sessions[tostring(primary.id)] then return primary.id end
+	for _, session in cx.sessions:list() do
+		if session.id ~= target.id and session.host == target.host then return session.id end
+	end
+	return nil
 end
 
 local function confirmWorktreeAction(cx, id)
@@ -449,43 +468,38 @@ local function confirmWorktreeAction(cx, id)
 		if not worktree then failed(nextCx, err); return end
 		local _, guardError = closeGuard(nextCx, request.path)
 		if guardError then failed(nextCx, guardError); return end
-		-- Keep the removal terminal outside the session being removed so that
-		-- closing the target on success cannot destroy its hook/error output.
-		openWorktree(nextCx, project.path)
-		-- Opening a session/canvas and a terminal together can exceed Tern's
-		-- 50 ms callback limit, especially without its session daemon.
-		tern.timer(0, function(launchCx)
-			if not launchCx or confirmation ~= request then return end
-			local primary = records("sessions")[project.path]
-			if not primary or launchCx.sessions:current().id ~= primary.id then
-				failed(launchCx, "The primary session changed before removal started. Try again."); return
+		local jobs = records("jobs")
+		for _, job in jobs do
+			if job.project == project.id and (job.path == worktree.path or (worktree.branch and job.branch == worktree.branch)) then
+				failed(nextCx, "A Worktrunk operation is already running for this worktree."); return
 			end
-			local _, launchError = closeGuard(launchCx, request.path)
-			if launchError then failed(launchCx, launchError); return end
-			local jobs = records("jobs")
-			for _, job in jobs do
-				if job.project == project.id and (job.path == worktree.path or (worktree.branch and job.branch == worktree.branch)) then
-					failed(launchCx, "A Worktrunk operation is already running for this worktree."); return
-				end
-			end
-			local jobId = token()
-			local receipt = tern.plugin.data .. "/removal-" .. jobId .. ".status"
-			local ready, command = pcall(wt.removal_command, project, worktree, receipt)
-			if not ready then failed(launchCx, command); return end
-			local terminal = launchCx.layout:new_tab({ cwd = project.path, command = command })
-			if not terminal then failed(launchCx, "Could not open the removal terminal."); return end
-			jobs[jobId] = {
-				kind = "remove", project = project.id, path = worktree.path, branch = worktree.branch,
-				label = request.label, receipt = receipt, pane = terminal, started = os.time(),
-				session = records("sessions")[worktree.path],
-			}
-			tern.kv.set("jobs", jobs)
-			confirmation = nil
-			problem, message = nil, "Deleting " .. request.label .. ". Review hooks and output in its removal terminal."
-			local tab = launchCx.session:tab_of(terminal)
-			if tab then launchCx.layout:name_tab(tab, "Delete: " .. request.label) end
-			redraw(launchCx)
-		end)
+		end
+		local jobId = token()
+		local receipt = tern.plugin.data .. "/removal-" .. jobId .. ".status"
+		local ready, command = pcall(wt.removal_command, project, worktree, receipt)
+		if not ready then failed(nextCx, command); return end
+		-- Like creation, the output tab opens in the background; you stay put.
+		local terminal = nextCx.layout:new_tab({ cwd = project.path, command = command }, { focus = false })
+		if not terminal then failed(nextCx, "Could not open the removal terminal."); return end
+		local target = records("sessions")[worktree.path]
+		if target and nextCx.sessions:current().id == target.id then
+			-- This session closes on success; keep the output somewhere that survives.
+			local keep = outputSession(nextCx, project, target)
+			if keep then nextCx.layout:move_to_new_tab(terminal, keep, { focus = false }) end
+		end
+		local tabName = "Delete: " .. request.label
+		local tab = nextCx.session:tab_of(terminal)
+		if tab then nextCx.layout:name_tab(tab, tabName) end
+		jobs[jobId] = {
+			kind = "remove", project = project.id, path = worktree.path, branch = worktree.branch,
+			label = request.label, receipt = receipt, pane = terminal, started = os.time(),
+			session = target, tab = tabName,
+		}
+		tern.kv.set("jobs", jobs)
+		confirmation = nil
+		problem, message = nil, "Deleting " .. request.label .. " in the background. Output is in the “" .. tabName
+			.. "” tab; answer any hook approval prompt there."
+		redraw(nextCx)
 	end)
 end
 
@@ -634,17 +648,20 @@ local function createWorktree(cx, pane, request, response)
 		local receipt = tern.plugin.data .. "/creation-" .. id .. ".status"
 		local ready, command = pcall(wt.creation_command, project, response.branch, receipt)
 		if not ready then rejectForm(nextCx, pane, command); return end
-		local terminal = nextCx.layout:new_tab({ cwd = project.path, command = command })
+		-- A background tab: the panel stays in front while setup runs.
+		local terminal = nextCx.layout:new_tab({ cwd = project.path, command = command }, { focus = false })
 		if not terminal then rejectForm(nextCx, pane, "Could not open the creation terminal."); return end
+		local tabName = "Create: " .. response.branch
 		local tab = nextCx.session:tab_of(terminal)
-		if tab then nextCx.layout:name_tab(tab, "Create: " .. response.branch) end
+		if tab then nextCx.layout:name_tab(tab, tabName) end
 		jobs[id] = {
 			kind = "create", project = project.id, branch = response.branch, displayName = displayName,
-			receipt = receipt, pane = terminal, started = os.time(),
+			receipt = receipt, pane = terminal, started = os.time(), tab = tabName,
 		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
-		problem, message = nil, "Creating " .. (displayName or response.branch) .. ". Approve hooks and review output in its setup terminal."
+		problem, message = nil, "Creating " .. (displayName or response.branch) .. " in the background. Output is in the “"
+			.. tabName .. "” tab; answer any hook approval prompt there."
 		redraw(nextCx)
 	end)
 end
@@ -801,17 +818,20 @@ local function checkJobs(cx)
 							report(cx, "Worktree deleted, but its session was left open: " .. tostring(closeError))
 						end
 					else
-						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; review the removal terminal.")
+						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; review the “"
+							.. (job.tab or "Delete: " .. job.label) .. "” tab.")
 					end
 				else
 					-- Applied on failure too: a partially created worktree keeps its label.
 					applyCreatedName(job)
 					local label = job.displayName or job.branch
 					if status == 0 then
-						problem, message = nil, "Created " .. label .. ". Review setup warnings in its terminal, then select the worktree here."
+						problem, message = nil, "Created " .. label .. ". Review any setup warnings in the “"
+							.. (job.tab or "Create: " .. job.branch) .. "” tab, then select the worktree here."
 						cx:toast("info", "Worktree created: " .. label, "Setup may have warnings; review its terminal output.")
 					else
-						problem, message = "Creation did not finish successfully for " .. label .. ". Check its setup terminal; a partially created worktree may still be listed.", nil
+						problem, message = "Creation did not finish successfully for " .. label .. ". Check the “"
+							.. (job.tab or "Create: " .. job.branch) .. "” tab; a partially created worktree may still be listed.", nil
 						cx:toast("error", "Worktree creation needs attention", label)
 					end
 				end

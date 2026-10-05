@@ -19,9 +19,9 @@ If `tern` is on your PATH, `tern plugin link "$PWD"` is equivalent. Linking relo
 1. Press **Cmd+Option+Shift+P**, or run **Open Projects** from Tern's command palette.
 2. Click **+** in the Projects header. Enter a checkout directory, optionally a display name and a local base branch. `~/` paths and linked checkouts work; duplicate repositories are detected by their canonical shared Git directory.
 3. Click a worktree to open its session. Each worktree is shown as a group: its name, a subtitle (the branch when renamed, otherwise the directory), and its open tabs beneath. The active session's whole group is highlighted. A filled green dot means a session is open, a **pulsing** green dot means an agent is working in it, a hollow dot means none, and amber marks running tabs or a deletion in progress. Click an indented tab to focus it. New tabs in a managed session start at its worktree root.
-4. Click **New Worktree** beside a project. Enter a new branch name and, optionally, a **Display name** (Tab moves to it). A separate **Create: …** terminal shows Worktrunk's approval prompt and setup output.
-5. After creation, return to Projects and select the new worktree. Review the setup terminal's output before closing it; Enter ends the helper after review.
-6. Right-click a worktree for **Rename**, **Add to Ice Box**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch.
+4. Click **New Worktree** beside a project. Enter a new branch name and, optionally, a **Display name** (Tab moves to it). Creation runs **in the background**: its output goes to a **Create: …** tab that opens without switching to it, and Projects says when it's done.
+5. When the completion message appears, select the new worktree. The **Create: …** tab keeps Worktrunk's output for review; Enter ends the helper there. If a hook needs approval, Worktrunk waits in that tab until you answer.
+6. Right-click a worktree for **Rename**, **Add to Ice Box**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch. Deletion also runs in the background, like creation.
 
 Click the info icon immediately after the **Projects** heading to open this guide in a rendered Markdown tab. Its tooltip is **How Projects works**. The button reads the README bundled with the installed plugin, so it works offline and when you share or copy the plugin to another machine.
 
@@ -69,11 +69,11 @@ Arguments are encoded before entering the login shell and decoded only inside Ba
 wt -C /path/to/project remove --foreground --no-delete-branch -- /path/to/worktree
 ```
 
-The **Delete: …** terminal opens in the primary checkout's session, not the session being deleted, so its output remains available afterward. Worktrunk keeps its normal hook approval prompts and removal hooks; Overseer never adds `--yes`, `--no-hooks`, or force flags.
+Deletion runs in a **Delete: …** tab that opens in the background, so you stay where you are; Projects shows the outcome when it finishes. If you delete the worktree you're in, that tab goes to the project's primary checkout session instead (or another session), because the deleted worktree's session closes on success; you then land in the primary checkout session, next to the output. Worktrunk keeps its normal hook approval prompts and removal hooks, answered in that tab; Overseer never adds `--yes`, `--no-hooks`, or force flags.
 
 The primary checkout cannot be deleted. Uncommitted changes and untracked files block removal. The target's repository identity, branch, and cleanliness are rechecked before invoking Worktrunk. **Ignored files are removed with the directory**; copy anything needed first, and stop programs that are writing into it.
 
-Only a zero exit status with the directory gone triggers closing its managed session. Failures leave the session open and retain the removal terminal for diagnosis. If the session becomes locked during removal, it is left open with an explicit warning. Cancelling the confirmation, or reloading the plugin before the command starts, does not delete anything.
+Only a zero exit status with the directory gone triggers closing its managed session. Failures leave the session open and retain the **Delete: …** tab for diagnosis. If the session becomes locked during removal, it is left open with an explicit warning. Cancelling the confirmation, or reloading the plugin before the command starts, does not delete anything.
 
 ## State and scope
 
