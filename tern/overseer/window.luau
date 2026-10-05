@@ -1,0 +1,637 @@
+--!nonstrict
+local wt = require("./worktrunk")
+local view = require("./view")
+
+local cache = {}
+local inflight = {}
+local rendered = {}
+local collapsed = {}
+local confirmation
+local message, problem
+local lastRefresh = -15000
+local sequence = 0
+
+local function records(key)
+	local value = tern.kv.get(key)
+	if value == nil then return {} end
+	assert(type(value) == "table", "Overseer storage is invalid: " .. key)
+	return value
+end
+
+local function projects()
+	return records("projects")
+end
+
+local function projectById(id)
+	for _, project in projects() do
+		if project.id == id then return project end
+	end
+	return nil
+end
+
+local function localHost(cx)
+	return cx.hosts:current().kind == "local"
+end
+
+local function requireLocal(cx)
+	if localHost(cx) then return true end
+	cx:toast("error", "Overseer manages local repositories", "Switch to the local host first.")
+	return false
+end
+
+local function report(cx, text)
+	problem, message = tostring(text), nil
+	cx:toast("error", "Overseer", problem)
+end
+
+local function sessionsById(cx)
+	local result = {}
+	for _, session in cx.sessions:list() do result[tostring(session.id)] = session end
+	return result
+end
+
+local function boundSession(path, sessions)
+	local binding = records("sessions")[path]
+	if binding then
+		local session = sessions[tostring(binding.id)]
+		if session and session.host == binding.host then return session end
+	end
+	return nil
+end
+
+local function activeWorktree(cx)
+	local current = cx.sessions:current()
+	for path, binding in records("sessions") do
+		if binding.id == current.id and binding.host == current.host then
+			local project = projectById(binding.project)
+			if project then return project, { path = path } end
+		end
+	end
+	return nil, nil
+end
+
+local function removing(path)
+	for _, job in records("jobs") do
+		if job.kind == "remove" and job.path == path then return true end
+	end
+	return false
+end
+
+local function model(cx)
+	local sessions = sessionsById(cx)
+	local names = records("worktree-names")
+	local tabs = {}
+	for _, tab in cx.session:tabs() do
+		local key = tostring(tab.session)
+		tabs[key] = tabs[key] or {}
+		table.insert(tabs[key], {
+			id = tab.id, pane = tab.pane, name = tab.name or tab.title or "Terminal", busy = tab.busy,
+		})
+	end
+	local result = { projects = {}, collapsed = collapsed, message = message, error = problem, confirmation = confirmation }
+	local current = cx.sessions:current()
+	for _, project in projects() do
+		local entry = cache[project.id]
+		local row = {
+			id = project.id, name = project.name, path = project.path, base = project.base,
+			loading = not entry or entry.loading, error = entry and entry.error, worktrees = {},
+		}
+		for _, worktree in (entry and entry.worktrees or {}) do
+			local item = table.clone(worktree)
+			item.deleting = removing(worktree.path)
+			item.displayName = names[project.id] and names[project.id][worktree.path]
+			local session = boundSession(worktree.path, sessions)
+			item.session, item.tabs = session, session and tabs[tostring(session.id)] or {}
+			if session and session.id == current.id then result.activePath = worktree.path end
+			table.insert(row.worktrees, item)
+		end
+		table.insert(result.projects, row)
+	end
+	return result
+end
+
+local function redraw(cx)
+	local canvases = cx.canvas:list()
+	local owned = {}
+	for _, canvas in canvases do
+		if canvas.owner == "overseer" then table.insert(owned, canvas) end
+	end
+	if #owned == 0 then return end
+	local data = model(cx)
+	local signature = tern.json.encode(data)
+	local tree
+	for _, canvas in owned do
+		if rendered[canvas.pane] ~= signature then
+			tree = tree or view.render(data)
+			cx.canvas:set(canvas.pane, { view = tree })
+			rendered[canvas.pane] = signature
+		end
+	end
+end
+
+local function refresh(cx)
+	lastRefresh = tern.now()
+	for _, project in projects() do
+		local entry = cache[project.id]
+		if not entry then
+			entry = { worktrees = {} }
+			cache[project.id] = entry
+		end
+		if not entry.loading then
+			entry.loading = true
+			wt.list(project, function(worktrees, err, nextCx)
+				entry.loading, entry.error = false, err
+				if worktrees then entry.worktrees = worktrees end
+				if nextCx then redraw(nextCx) end
+			end)
+		end
+	end
+	redraw(cx)
+end
+
+local function navigatorSplit(tree, pane)
+	if tree.pane then return nil end
+	if tree.split == "right" and tree[1].pane == pane then return tree end
+	return navigatorSplit(tree[1], pane) or navigatorSplit(tree[2], pane)
+end
+
+local function sizeNavigator(cx, pane)
+	local tab = cx.session:tab_of(pane)
+	local layout = tab and cx.session:layout(tab)
+	local split = layout and navigatorSplit(layout.root, pane)
+	if not split then return end
+	local before = split.ratio
+	-- Tern exposes cell-based resizing, not a ratio setter. Measure one cell's
+	-- relative change; its ratio delta scales with the pane's current share.
+	if not cx.layout:resize(pane, "right", 1) then return end
+	local resized = navigatorSplit(cx.session:layout(tab).root, pane)
+	local step = (resized.ratio - before) / before
+	if step > 0 then
+		cx.layout:resize(pane, "right", math.round((1 / (3 * resized.ratio) - 1) / step))
+	end
+end
+
+local function navigator(cx)
+	if not requireLocal(cx) then return end
+	local current = cx.sessions:current().id
+	local tabSessions = {}
+	for _, tab in cx.session:tabs() do tabSessions[tab.id] = tab.session end
+	for _, canvas in cx.canvas:list() do
+		if canvas.owner == "overseer" and tabSessions[cx.session:tab_of(canvas.pane)] == current then
+			cx.layout:focus(canvas.pane)
+			refresh(cx)
+			return
+		end
+	end
+	local target = cx.session:focused()
+	local pane, err = cx.canvas:open({
+		title = "Projects", about = "Local repositories, Worktrunk worktrees, and dedicated sessions.",
+		view = view.render(model(cx)), how = "beside",
+	})
+	if not pane then report(cx, err or "Could not open the Projects navigator"); return end
+	if target and cx.layout:move(pane, target, "left") then sizeNavigator(cx, pane) end
+	refresh(cx)
+end
+
+local function findWorktree(path)
+	for _, project in projects() do
+		local entry = cache[project.id]
+		for _, worktree in (entry and entry.worktrees or {}) do
+			if worktree.path == path then return project, worktree end
+		end
+	end
+	return nil, nil
+end
+
+local function openWorktree(cx, path)
+	if not requireLocal(cx) then return end
+	if removing(path) then report(cx, "This worktree is being deleted. Review its removal terminal."); return end
+	local project, worktree = findWorktree(path)
+	if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return end
+	if not tern.fs.exists(path) then report(cx, "Worktree directory is missing: " .. path); refresh(cx); return end
+	local session = boundSession(path, sessionsById(cx))
+	if session then
+		cx.sessions:switch(session.id)
+	else
+		local label = project.name .. " / " .. (worktree.branch or "detached")
+		session = cx.sessions:create({ name = label, cwd = path })
+		local bindings = records("sessions")
+		bindings[path] = { id = session.id, host = session.host, project = project.id }
+		tern.kv.set("sessions", bindings)
+		local terminal = cx.session:focused()
+		-- Each worktree gets one navigator beside its first terminal, not a new
+		-- navigator every time the user switches tabs or sessions.
+		navigator(cx)
+		if terminal then cx.layout:focus(terminal) end
+	end
+	redraw(cx)
+end
+
+local function token()
+	sequence += 1
+	return tostring(os.time()) .. "-" .. tostring(math.floor(tern.now() * 1000)) .. "-" .. tostring(math.random(1, 1000000000)) .. "-" .. tostring(sequence)
+end
+
+local function closeGuard(cx, path)
+	local session = boundSession(path, sessionsById(cx))
+	if not session then return nil, nil end
+	if session.locked then return nil, "Unlock this session in Tern before closing or deleting it." end
+	local tabs = {}
+	for _, tab in cx.session:tabs() do tabs[tab.id] = tab.session end
+	for _, job in records("jobs") do
+		local tab = cx.session:tab_of(job.pane)
+		if tab and tabs[tab] == session.id then
+			return nil, "A Worktrunk operation is still running in this session. Finish or cancel it in its terminal first."
+		end
+	end
+	return session, nil
+end
+
+local function closeManagedSession(cx, path, expected)
+	local bindings = records("sessions")
+	local binding = bindings[path]
+	if not binding then return true end
+	if expected and (binding.id ~= expected.id or binding.host ~= expected.host) then return true end
+	local session, err = closeGuard(cx, path)
+	if err then return false, err end
+	if session then
+		if cx.sessions:current().id == session.id then
+			local replacement
+			for _, other in cx.sessions:list() do
+				if other.id ~= session.id and other.host == session.host then replacement = other; break end
+			end
+			if replacement then
+				cx.sessions:switch(replacement.id)
+			else
+				local project = projectById(binding.project)
+				cx.sessions:create({ name = "Projects", cwd = project and project.path })
+			end
+		end
+		cx.sessions:close(session.id)
+	end
+	bindings[path] = nil
+	tern.kv.set("sessions", bindings)
+	return true
+end
+
+local function requestWorktreeAction(cx, kind, path)
+	local project, worktree = findWorktree(path)
+	if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return end
+	if removing(path) then report(cx, "This worktree is already being deleted."); return end
+	local session, err = closeGuard(cx, path)
+	if err then report(cx, err); return end
+	if kind == "close" and not session then report(cx, "This worktree has no open session."); return end
+	if kind == "delete" and (worktree.is_main or path == project.path) then
+		report(cx, "The primary checkout cannot be deleted."); return
+	end
+	problem, message = nil, nil
+	confirmation = {
+		id = token(), kind = kind, path = path, label = worktree.branch or "Detached HEAD",
+		project = project.id, worktree = table.clone(worktree),
+	}
+	redraw(cx)
+end
+
+local function confirmWorktreeAction(cx, id)
+	local request = confirmation
+	if not request or request.id ~= id or request.checking then return end
+	if request.kind == "close" then
+		confirmation = nil
+		local ok, err = closeManagedSession(cx, request.path)
+		if not ok then report(cx, err) else
+			problem, message = nil, "Closed session for " .. request.label .. ". Worktree files are unchanged."
+			navigator(cx)
+		end
+		redraw(cx)
+		return
+	end
+	local project = projectById(request.project)
+	if not project then confirmation = nil; report(cx, "Project is no longer registered."); redraw(cx); return end
+	request.checking = true
+	redraw(cx)
+	wt.validate_removal(project, request.worktree, function(worktree, err, nextCx)
+		-- Cancelling or reloading while validation runs never starts a deletion.
+		if not nextCx or confirmation ~= request then return end
+		local function failed(freshCx, text)
+			confirmation = nil
+			report(freshCx, text)
+			refresh(freshCx)
+		end
+		if not worktree then failed(nextCx, err); return end
+		local _, guardError = closeGuard(nextCx, request.path)
+		if guardError then failed(nextCx, guardError); return end
+		-- Keep the removal terminal outside the session being removed so that
+		-- closing the target on success cannot destroy its hook/error output.
+		openWorktree(nextCx, project.path)
+		-- Opening a session/canvas and a terminal together can exceed Tern's
+		-- 50 ms callback limit, especially without its session daemon.
+		tern.timer(0, function(launchCx)
+			if not launchCx or confirmation ~= request then return end
+			local primary = records("sessions")[project.path]
+			if not primary or launchCx.sessions:current().id ~= primary.id then
+				failed(launchCx, "The primary session changed before removal started. Try again."); return
+			end
+			local _, launchError = closeGuard(launchCx, request.path)
+			if launchError then failed(launchCx, launchError); return end
+			local jobs = records("jobs")
+			for _, job in jobs do
+				if job.project == project.id and (job.path == worktree.path or (worktree.branch and job.branch == worktree.branch)) then
+					failed(launchCx, "A Worktrunk operation is already running for this worktree."); return
+				end
+			end
+			local jobId = token()
+			local receipt = tern.plugin.data .. "/removal-" .. jobId .. ".status"
+			local ready, command = pcall(wt.removal_command, project, worktree, receipt)
+			if not ready then failed(launchCx, command); return end
+			local terminal = launchCx.layout:new_tab({ cwd = project.path, command = command })
+			if not terminal then failed(launchCx, "Could not open the removal terminal."); return end
+			jobs[jobId] = {
+				kind = "remove", project = project.id, path = worktree.path, branch = worktree.branch,
+				label = request.label, receipt = receipt, pane = terminal,
+				session = records("sessions")[worktree.path],
+			}
+			tern.kv.set("jobs", jobs)
+			confirmation = nil
+			problem, message = nil, "Deleting " .. request.label .. ". Review hooks and output in its removal terminal."
+			local tab = launchCx.session:tab_of(terminal)
+			if tab then launchCx.layout:name_tab(tab, "Delete: " .. request.label) end
+			redraw(launchCx)
+		end)
+	end)
+end
+
+local function openForm(cx, mode, project, worktree)
+	if not requireLocal(cx) then return end
+	if worktree and removing(worktree.path) then report(cx, "This worktree is being deleted."); return end
+	local names = worktree and records("worktree-names")[project.id]
+	local id = token()
+	local pane = cx:new_block("overseer.form", {
+		id, mode,
+		if worktree then worktree.branch or "Detached HEAD" else project and project.name or "",
+		if worktree then names and names[worktree.path] or "" else project and project.base or "",
+	}, "beside")
+	if not pane then report(cx, "The Overseer form block is unavailable. Reload the plugin."); return end
+	tern.kv.set("pending-form:" .. tostring(pane), {
+		token = id, mode = mode, project = project and project.id, path = worktree and worktree.path,
+	})
+end
+
+local function rejectForm(cx, pane, err)
+	inflight[pane] = nil
+	local request = tern.kv.get("pending-form:" .. tostring(pane))
+	if request then
+		request.response = nil
+		tern.kv.set("pending-form:" .. tostring(pane), request)
+	end
+	if cx.session:pane(pane) then
+		cx.session:event(pane, { ev = "action", act = "retry", value = tostring(err) })
+	else
+		report(cx, err)
+	end
+end
+
+local function finishForm(cx, pane)
+	inflight[pane] = nil
+	tern.kv.set("pending-form:" .. tostring(pane), nil)
+	if cx.session:pane(pane) then cx.layout:close(pane) end
+end
+
+local function addProject(cx, pane, response)
+	wt.inspect(response.path, function(project, err, nextCx)
+		if not nextCx then return end
+		if not nextCx.session:pane(pane) then finishForm(nextCx, pane); return end
+		if not project then rejectForm(nextCx, pane, err); return end
+		if response.name and response.name:match("%S") then project.name = response.name end
+		local function save(saveCx)
+			if not saveCx.session:pane(pane) then finishForm(saveCx, pane); return end
+			if project.base == "" then
+				rejectForm(saveCx, pane, "No default local base found. Enter an existing local branch in Base.")
+				return
+			end
+			local all = projects()
+			for _, existing in all do
+				if existing.id == project.id then
+					rejectForm(saveCx, pane, "This repository is already registered as " .. existing.name)
+					return
+				end
+			end
+			table.insert(all, project)
+			tern.kv.set("projects", all)
+			finishForm(saveCx, pane)
+			problem, message = nil, "Added " .. project.name
+			refresh(saveCx)
+		end
+		if response.base and response.base:match("%S") then
+			local base = response.base
+			if base:find("[%c]") or base:sub(1, 1) == "-" then rejectForm(nextCx, pane, "Enter a local base branch name."); return end
+			tern.process.run({ "git", "-C", project.path, "show-ref", "--verify", "--quiet", "refs/heads/" .. base }, { timeout_ms = 15000 }, function(result, freshCx)
+				if not freshCx then return end
+				if result.status ~= 0 then rejectForm(freshCx, pane, "Base branch does not exist locally: " .. base); return end
+				project.base = base
+				save(freshCx)
+			end)
+		else
+			save(nextCx)
+		end
+	end)
+end
+
+local function createWorktree(cx, pane, request, response)
+	local project = projectById(request.project)
+	if not project then rejectForm(cx, pane, "Project is no longer registered."); return end
+	wt.validate(project, response.branch, function(ok, err, nextCx)
+		if not nextCx then return end
+		if not nextCx.session:pane(pane) then finishForm(nextCx, pane); return end
+		if not ok then rejectForm(nextCx, pane, err); return end
+		local jobs = records("jobs")
+		for _, job in jobs do
+			if job.project == project.id and job.branch == response.branch and not job.status then
+				rejectForm(nextCx, pane, "Creation is already running. Check its setup terminal.")
+				return
+			end
+		end
+		local id = token()
+		local receipt = tern.plugin.data .. "/creation-" .. id .. ".status"
+		local ready, command = pcall(wt.creation_command, project, response.branch, receipt)
+		if not ready then rejectForm(nextCx, pane, command); return end
+		local terminal = nextCx.layout:new_tab({ cwd = project.path, command = command })
+		if not terminal then rejectForm(nextCx, pane, "Could not open the creation terminal."); return end
+		local tab = nextCx.session:tab_of(terminal)
+		if tab then nextCx.layout:name_tab(tab, "Create: " .. response.branch) end
+		jobs[id] = { kind = "create", project = project.id, branch = response.branch, receipt = receipt, pane = terminal }
+		tern.kv.set("jobs", jobs)
+		finishForm(nextCx, pane)
+		problem, message = nil, "Creating " .. response.branch .. ". Approve hooks and review output in its setup terminal."
+		redraw(nextCx)
+	end)
+end
+
+local function renameWorktree(cx, pane, request, response)
+	local project, worktree = findWorktree(request.path)
+	if not project or project.id ~= request.project or not tern.fs.exists(request.path) then
+		rejectForm(cx, pane, "Worktree is no longer available. Refresh Projects."); return
+	end
+	if removing(request.path) then rejectForm(cx, pane, "This worktree is being deleted."); return end
+	if type(response.name) ~= "string" or response.name:find("[%c]") then
+		rejectForm(cx, pane, "Use a single-line display name without control characters."); return
+	end
+	local name = response.name:match("^%s*(.-)%s*$")
+	local names = records("worktree-names")
+	names[project.id] = names[project.id] or {}
+	names[project.id][worktree.path] = if name == "" then nil else name
+	tern.kv.set("worktree-names", names)
+	finishForm(cx, pane)
+	problem, message = nil, if name == "" then "Restored the branch label." else "Display name saved. Git branch and directory unchanged."
+	redraw(cx)
+end
+
+local function forms(cx)
+	for _, pane in cx.session:panes() do
+		if pane.block == "overseer.form" and not inflight[pane.pane] then
+			local request = tern.kv.get("pending-form:" .. tostring(pane.pane))
+			if request then
+				local response = request.response or tern.kv.get("form:" .. request.token)
+				if response then
+					-- Keep validation inputs until completion so a plugin reload can
+					-- resume an in-flight request without leaving a submitted form stuck.
+					request.response = response
+					tern.kv.set("pending-form:" .. tostring(pane.pane), request)
+					tern.kv.set("form:" .. request.token, nil)
+					inflight[pane.pane] = true
+					if response.cancelled then
+						finishForm(cx, pane.pane)
+					elseif request.mode == "project" and response.mode == "project" then
+						addProject(cx, pane.pane, response)
+					elseif request.mode == "create" and response.mode == "create" then
+						createWorktree(cx, pane.pane, request, response)
+					elseif request.mode == "rename" and response.mode == "rename" then
+						renameWorktree(cx, pane.pane, request, response)
+					else
+						rejectForm(cx, pane.pane, "Invalid form response. Please try again.")
+					end
+				end
+			end
+		end
+	end
+end
+
+local function checkJobs(cx)
+	local jobs = records("jobs")
+	local changed = false
+	for id, job in jobs do
+		if not job.status then
+			local status
+			if tern.fs.exists(job.receipt) then
+				status = tonumber(tern.fs.read(job.receipt))
+				if status == nil then status = -1 end
+				tern.fs.remove(job.receipt)
+			else
+				local pane = cx.session:pane(job.pane)
+				if not pane or pane.exited ~= nil or pane.error then status = -1 end
+			end
+			if status ~= nil then
+				jobs[id], changed = nil, true
+				if job.kind == "remove" then
+					if status == 0 and not tern.fs.exists(job.path) then
+						local names = records("worktree-names")
+						if names[job.project] then
+							names[job.project][job.path] = nil
+							tern.kv.set("worktree-names", names)
+						end
+						local closed, closeError = true, nil
+						if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
+						if closed then
+							problem, message = nil, "Deleted " .. job.label .. ". No Git branches were deleted."
+							cx:toast("info", "Worktree deleted: " .. job.label, "Git branches kept.")
+						else
+							report(cx, "Worktree deleted, but its session was left open: " .. tostring(closeError))
+						end
+					else
+						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; review the removal terminal.")
+					end
+				elseif status == 0 then
+					problem, message = nil, "Created " .. job.branch .. ". Review setup warnings in its terminal, then select the worktree here."
+					cx:toast("info", "Worktree created: " .. job.branch, "Setup may have warnings; review its terminal output.")
+				else
+					problem, message = "Creation did not finish successfully for " .. job.branch .. ". Check its setup terminal; a partially created worktree may still be listed.", nil
+					cx:toast("error", "Worktree creation needs attention", job.branch)
+				end
+			end
+		end
+	end
+	if changed then
+		tern.kv.set("jobs", jobs)
+		refresh(cx)
+	end
+end
+
+tern.command({ id = "projects", title = "Open Projects", icon = "branch", keys = { "cmd+alt+shift+p" }, run = navigator })
+tern.command({ id = "add", title = "Add project", icon = "folder", run = function(cx) openForm(cx, "project") end })
+tern.command({ id = "create", title = "Create worktree", icon = "branch", run = function(cx)
+	local project = activeWorktree(cx)
+	if project then openForm(cx, "create", project) else navigator(cx); cx:toast("info", "Choose + beside a project to create a worktree") end
+end })
+
+tern.on("canvas_action", function(ev, cx)
+	if ev.act == "help" then
+		cx.docs:open(tern.plugin.dir .. "/README.md", { how = "tab" })
+		return true
+	end
+	if not requireLocal(cx) then return true end
+	if ev.act == "add" then openForm(cx, "project")
+	elseif ev.act == "refresh" then problem, message = nil, nil; refresh(cx)
+	elseif ev.act == "collapse" then collapsed[ev.value] = not collapsed[ev.value]; redraw(cx)
+	elseif ev.act == "create" then
+		local project = projectById(ev.value)
+		if project then openForm(cx, "create", project) end
+	elseif ev.act == "open" then openWorktree(cx, ev.value)
+	elseif ev.act == "rename" then
+		local project, worktree = findWorktree(view.worktreePath(ev.node))
+		if project then openForm(cx, "rename", project, worktree)
+		else report(cx, "Worktree is no longer listed. Refresh Projects.") end
+	elseif ev.act == "close-session" then
+		requestWorktreeAction(cx, "close", view.worktreePath(ev.node))
+	elseif ev.act == "delete-worktree" then
+		requestWorktreeAction(cx, "delete", view.worktreePath(ev.node))
+	elseif ev.act == "confirm" then confirmWorktreeAction(cx, ev.value)
+	elseif ev.act == "cancel" then
+		if confirmation and confirmation.id == ev.value then confirmation = nil; redraw(cx) end
+	elseif ev.act == "tab" then
+		local pane = tonumber(ev.value)
+		if pane and cx.session:pane(pane) then cx.layout:focus(pane) end
+	else return false end
+	return true
+end)
+
+tern.override("new_tab", function(cx)
+	if not localHost(cx) then return false end
+	local _, worktree = activeWorktree(cx)
+	if not worktree then return false end
+	cx.layout:new_tab({ cwd = worktree.path })
+	return true
+end)
+
+tern.chrome.status(function()
+	return { { text = "Projects", icon = "branch", command = "plugin.overseer.projects" } }
+end)
+
+local function tick(cx)
+	local ok, err = pcall(function()
+		if not localHost(cx) then return end
+		forms(cx)
+		checkJobs(cx)
+		if tern.now() - lastRefresh >= 15000 and #cx.canvas:list() > 0 then refresh(cx) end
+		redraw(cx)
+	end)
+	if not ok then
+		local text = tostring(err)
+		if problem ~= text then report(cx, text) end
+	end
+	tern.timer(750, tick)
+end
+
+tern.on("window_start", function(cx)
+	refresh(cx)
+end)
+-- Timers are restarted on reload; window_start intentionally is not.
+tern.timer(750, tick)
