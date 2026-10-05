@@ -258,6 +258,22 @@
   color: var(--t1);
   padding: 16px;
 }
+[data-role='overseer.backLink'] {
+  margin: -4px 0 10px -6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+[data-role='overseer.backLink']:hover,
+[data-role='overseer.backLink']:focus-visible {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
 [data-role='overseer.formHeading'] {
   margin-bottom: 12px;
 }

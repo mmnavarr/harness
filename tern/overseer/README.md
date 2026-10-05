@@ -25,7 +25,7 @@ If `tern` is on your PATH, `tern plugin link "$PWD"` is equivalent. Linking relo
 
 Click the info icon immediately after the **Projects** heading to open this guide in a rendered Markdown tab. Its tooltip is **How Projects works**. The button reads the README bundled with the installed plugin, so it works offline and when you share or copy the plugin to another machine.
 
-Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unicode text. Validation failures leave the form editable. **Refresh** discovers externally created/removed worktrees; an open navigator also refreshes every 15 seconds.
+Add project, New worktree, and Rename open **in place of the Projects panel**, like a page within it: same position, same width, so the rest of your layout never shifts. Click **← Projects** or press Esc to go back without changes; submitting returns to Projects too. While a form is showing, the Projects shortcut focuses it rather than opening a second panel. Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unicode text. Validation failures leave the form editable. **Refresh** discovers externally created/removed worktrees; an open navigator also refreshes every 15 seconds.
 
 The navigator is a native pane, not an application-wide sidebar. It opens to the left of the first terminal of a new worktree session, using approximately one-third of the width (rounded to Tern's resize increment). It is not duplicated into every tab. The shortcut returns to that session's existing navigator, even from another tab. Resize its divider using Tern's normal controls; reopening Projects or switching worktrees preserves that session's adjusted width.
 
@@ -73,7 +73,7 @@ Only a zero exit status with the directory gone triggers closing its managed ses
 
 ## State and scope
 
-Project records, worktree display names, and worktree/session associations live in Tern's `plugin-data/overseer/kv.json`. Tern owns the actual sessions, tabs, shells, and persisted canvas contents. Reloading the plugin restores form drafts, names, and session associations without recreating worktrees. Closing a form during validation cancels its pending operation.
+Project records, worktree display names, and worktree/session associations live in Tern's `plugin-data/overseer/kv.json`. Tern owns the actual sessions, tabs, shells, and persisted canvas contents. Reloading the plugin restores form drafts, names, and session associations without recreating worktrees. Closing a form's pane during validation cancels its pending operation.
 
 This plugin manages **local repositories**. It does not clone repositories, delete Git branches, move existing unrelated tabs, or replace Tern's global navigation. Existing worktrees are listed even if they have no Tern session yet. Unlinking the plugin does not remove worktrees or stop existing terminal sessions:
 
@@ -83,7 +83,7 @@ This plugin manages **local repositories**. It does not clone repositories, dele
 
 ## Implementation
 
-- `window.luau`: project registry, async discovery, session ownership, confirmation actions, forms, and lifecycle jobs.
+- `window.luau`: project registry, async discovery, session ownership, confirmation actions, swapping forms into the Projects panel's place, and lifecycle jobs.
 - `worktrunk.luau`: Git/Worktrunk discovery, validation, shell-safe operation commands, and the GitHub pull request lookup.
 - `worktree-operation.sh`: interactive creation/removal and atomic completion receipts.
 - `view.luau`, `styles.css`, `icons.css` (generated): native project/worktree/tab hierarchy, PR badges, and the info icon.

@@ -88,14 +88,24 @@ tern.block.define("form", {
 		end
 		return state
 	end,
-	title = function(state)
-		return if state.mode == "project" then "Add project" elseif state.mode == "rename" then "Rename worktree" else "New worktree"
+	-- The form occupies the Projects panel's slot, so keep the panel's title.
+	title = function()
+		return "Projects"
 	end,
 	view = function(state, cx)
 		local heading = if state.mode == "project" then "Add project" elseif state.mode == "rename" then "Rename worktree" else "New worktree"
-		local children = { text("heading", heading, "overseer.formHeading") }
+		local children = {
+			-- In a row so the link is only as wide as its text, not the whole pane.
+			ui.node("row", { key = "nav" }, {
+				ui.el("button", {
+					key = "back", role = "overseer.backLink", text = "← Projects",
+					title = "Back to Projects (Esc)", actions = { click = "cancel" },
+				}),
+			}),
+			text("heading", heading, "overseer.formHeading"),
+		}
 		if state.submitted then
-			table.insert(children, text("submitted", if state.cancelled then "Cancelled. Waiting for Projects..." else "Submitted. Waiting for Projects...", "overseer.message"))
+			table.insert(children, text("submitted", if state.cancelled then "Returning to Projects…" else "Working…", "overseer.message"))
 		else
 			table.insert(children, text("help", if state.mode == "project"
 				then "Choose an existing Git checkout. Name and base branch are optional."
@@ -121,9 +131,8 @@ tern.block.define("form", {
 					text = if state.mode == "project" then "Add project" elseif state.mode == "rename" then "Save name" else "Create worktree",
 					actions = { click = "submit" },
 				}),
-				ui.el("button", { key = "cancel", role = "overseer.button", text = "Cancel", actions = { click = "cancel" } }),
 			}))
-			table.insert(children, text("keys", "Enter to submit · Esc to cancel · Tab to change fields", "overseer.hint"))
+			table.insert(children, text("keys", "Enter to submit · Esc to go back · Tab to change fields", "overseer.hint"))
 			if not state.focusScheduled then
 				state.focusScheduled = true
 				-- Timer executes after this view mounts; a closed pane safely ignores focus.

@@ -12,6 +12,8 @@ local confirmation
 local message, problem
 local lastRefresh = -15000
 local sequence = 0
+-- Defined after forms(); openForm starts it.
+local watchForms
 
 local function records(key)
 	local value = tern.kv.get(key)
@@ -202,26 +204,58 @@ local function sizeNavigator(cx, pane)
 	end
 end
 
-local function navigator(cx)
-	if not requireLocal(cx) then return end
+-- The Projects slot in the current session: the navigator canvas, or a form
+-- currently swapped into its place.
+local function projectsSlot(cx)
 	local current = cx.sessions:current().id
 	local tabSessions = {}
 	for _, tab in cx.session:tabs() do tabSessions[tab.id] = tab.session end
+	local function inSession(pane)
+		return tabSessions[cx.session:tab_of(pane)] == current
+	end
 	for _, canvas in cx.canvas:list() do
-		if canvas.owner == "overseer" and tabSessions[cx.session:tab_of(canvas.pane)] == current then
-			cx.layout:focus(canvas.pane)
-			refresh(cx)
-			return
-		end
+		if canvas.owner == "overseer" and inSession(canvas.pane) then return canvas.pane, "canvas" end
+	end
+	for _, pane in cx.session:panes() do
+		if pane.block == "overseer.form" and inSession(pane.pane) then return pane.pane, "form" end
+	end
+	return nil
+end
+
+local NAVIGATOR = {
+	title = "Projects", about = "Local repositories, Worktrunk worktrees, and dedicated sessions.",
+}
+
+-- Swaps `slot` for a new pane in the same place and size: Tern has no in-place
+-- replace for canvases, so open the new pane beside the old one (splitting only
+-- that slot), then close the old one so the new pane inherits the whole slot.
+local function swapSlot(cx, slot, open)
+	cx.layout:focus(slot)
+	local pane, err = open()
+	if not pane then return nil, err end
+	cx.layout:close(slot)
+	rendered[slot] = nil
+	return pane
+end
+
+-- Returns the Projects panel's pane (existing or newly opened), or nil.
+local function navigator(cx)
+	if not requireLocal(cx) then return nil end
+	local slot = projectsSlot(cx)
+	if slot then
+		cx.layout:focus(slot)
+		refresh(cx)
+		return slot
 	end
 	local target = cx.session:focused()
 	local pane, err = cx.canvas:open({
-		title = "Projects", about = "Local repositories, Worktrunk worktrees, and dedicated sessions.",
+		title = NAVIGATOR.title, about = NAVIGATOR.about,
 		view = view.render(model(cx)), how = "beside",
 	})
-	if not pane then report(cx, err or "Could not open the Projects navigator"); return end
+	if not pane then report(cx, err or "Could not open the Projects navigator"); return nil end
 	if target and cx.layout:move(pane, target, "left") then sizeNavigator(cx, pane) end
 	refresh(cx)
+	return pane
 end
 
 local function findWorktree(path)
@@ -391,20 +425,47 @@ local function confirmWorktreeAction(cx, id)
 	end)
 end
 
-local function openForm(cx, mode, project, worktree)
+-- Forms take the Projects panel's place, like a page within it; finishing or
+-- going back puts the panel back. The slot keeps its size either way.
+local function openForm(cx, mode, project, worktree, opened)
 	if not requireLocal(cx) then return end
 	if worktree and removing(worktree.path) then report(cx, "This worktree is being deleted."); return end
+	local slot, kind
+	if opened then
+		-- A just-opened panel isn't listed by canvas:list() until a later tick.
+		if not cx.session:pane(opened) then report(cx, "Could not open the Projects panel."); return end
+		slot = opened
+	else
+		slot, kind = projectsSlot(cx)
+	end
+	if kind == "form" then
+		cx.layout:focus(slot)
+		cx:toast("info", "Finish or go back from the open form first")
+		return
+	end
+	if not slot then
+		-- Opening the panel and swapping it in one callback risks Tern's 50 ms budget.
+		local pane = navigator(cx)
+		if not pane then return end
+		tern.timer(0, function(nextCx)
+			if nextCx then openForm(nextCx, mode, project, worktree, pane) end
+		end)
+		return
+	end
 	local names = worktree and records("worktree-names")[project.id]
 	local id = token()
-	local pane = cx:new_block("overseer.form", {
-		id, mode,
-		if worktree then worktree.branch or "Detached HEAD" else project and project.name or "",
-		if worktree then names and names[worktree.path] or "" else project and project.base or "",
-	}, "beside")
+	local pane = swapSlot(cx, slot, function()
+		return cx:new_block("overseer.form", {
+			id, mode,
+			if worktree then worktree.branch or "Detached HEAD" else project and project.name or "",
+			if worktree then names and names[worktree.path] or "" else project and project.base or "",
+		}, "beside")
+	end)
 	if not pane then report(cx, "The Overseer form block is unavailable. Reload the plugin."); return end
 	tern.kv.set("pending-form:" .. tostring(pane), {
 		token = id, mode = mode, project = project and project.id, path = worktree and worktree.path,
 	})
+	watchForms()
 end
 
 local function rejectForm(cx, pane, err)
@@ -424,7 +485,18 @@ end
 local function finishForm(cx, pane)
 	inflight[pane] = nil
 	tern.kv.set("pending-form:" .. tostring(pane), nil)
-	if cx.session:pane(pane) then cx.layout:close(pane) end
+	if not cx.session:pane(pane) then return end
+	local data = model(cx)
+	local navigatorPane = swapSlot(cx, pane, function()
+		return cx.canvas:open({
+			title = NAVIGATOR.title, about = NAVIGATOR.about, view = view.render(data), how = "beside",
+		})
+	end)
+	if navigatorPane then
+		rendered[navigatorPane] = tern.json.encode(data)
+	else
+		cx.layout:close(pane)
+	end
 end
 
 local function addProject(cx, pane, response)
@@ -583,6 +655,27 @@ local function forms(cx)
 	end
 end
 
+-- Forms post their responses through kv, which has no change notification.
+-- While one is open, check every 100 ms (forms() alone, which only reads kv)
+-- so Back and Submit feel immediate; the 750 ms tick covers everything else.
+local watching = false
+watchForms = function()
+	if watching then return end
+	watching = true
+	local function step(cx)
+		if not cx then watching = false; return end
+		local open = false
+		for _, pane in cx.session:panes() do
+			if pane.block == "overseer.form" then open = true; break end
+		end
+		if not open then watching = false; return end
+		local ok, err = pcall(forms, cx)
+		if not ok then tern.log.warn("Overseer form check failed: " .. tostring(err)) end
+		tern.timer(100, step)
+	end
+	tern.timer(100, step)
+end
+
 -- The helper's receipt is the only authority on an operation's outcome. A
 -- terminal that looks closed or missing is just a hint: Tern can misreport a
 -- pane while its program keeps running in the session daemon. Report failure
@@ -662,7 +755,7 @@ local function checkJobs(cx)
 	end
 end
 
-tern.command({ id = "projects", title = "Open Projects", icon = "branch", keys = { "cmd+alt+shift+p" }, run = navigator })
+tern.command({ id = "projects", title = "Open Projects", icon = "branch", keys = { "cmd+alt+shift+p" }, run = function(cx) navigator(cx) end })
 tern.command({ id = "add", title = "Add project", icon = "folder", run = function(cx) openForm(cx, "project") end })
 tern.command({ id = "create", title = "Create worktree", icon = "branch", run = function(cx)
 	local project = activeWorktree(cx)
@@ -720,6 +813,8 @@ local function tick(cx)
 	local ok, err = pcall(function()
 		if not localHost(cx) then return end
 		forms(cx)
+		-- Resumes fast form checks after a plugin reload left a form open.
+		watchForms()
 		checkJobs(cx)
 		if tern.now() - lastRefresh >= 15000 and #cx.canvas:list() > 0 then refresh(cx) end
 		redraw(cx)
