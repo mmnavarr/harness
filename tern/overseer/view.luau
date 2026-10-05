@@ -7,14 +7,21 @@ local function safeKey(value)
 	end))
 end
 
--- Tern labels menu entries with the whole action string, including any =value.
--- Keep menu actions plain and recover their target from our keyed row node.
-function View.worktreePath(node)
-	local hex = type(node) == "string" and node:match("%.w(%x+)%.row$")
+local function unhex(hex)
 	if not hex or #hex % 2 ~= 0 then return nil end
 	return (string.gsub(hex, "..", function(byte)
 		return string.char(tonumber(byte, 16))
 	end))
+end
+
+-- Tern labels menu entries with the whole action string, including any =value.
+-- Keep menu actions plain and recover their target from our keyed row node.
+function View.worktreePath(node)
+	return unhex(type(node) == "string" and node:match("%.w(%x+)%.row$") or nil)
+end
+
+function View.projectId(node)
+	return unhex(type(node) == "string" and node:match("%.p(%x+)%.header$") or nil)
 end
 
 local function text(key, value, role, props)
@@ -183,7 +190,10 @@ function View.render(model)
 	for _, project in ipairs(model.projects) do
 		local collapsed = model.collapsed and model.collapsed[project.id]
 		local projectChildren = {
-			ui.node("row", { key = "header", role = "overseer.projectHeader" }, {
+			ui.node("row", {
+				key = "header", role = "overseer.projectHeader",
+				actions = { menu = { "Change base branch" } },
+			}, {
 				button("collapse", (if collapsed then "▸  " else "▾  ") .. project.name,
 					"collapse=" .. project.id, (if collapsed then "Expand " else "Collapse ") .. project.name,
 					"overseer.projectToggle"),

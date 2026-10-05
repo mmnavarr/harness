@@ -6,7 +6,7 @@ local function text(key, value, role)
 end
 
 local function fieldOrder(state)
-	return if state.mode == "project" then { "path", "name", "base" } elseif state.mode == "rename" then { "name" } else { "branch", "name" }
+	return if state.mode == "rename" then { "name" } elseif state.mode == "base" then { "base" } else { "branch", "name" }
 end
 
 local function focus(state, cx)
@@ -22,18 +22,15 @@ local function finish(state, cancelled)
 	local response
 	if cancelled then
 		response = { cancelled = true }
-	elseif state.mode == "project" then
-		if not string.find(state.fields.path.text, "%S") then
-			state.error = "Enter a repository path."
-			state.focus = "path"
-			return
-		end
-		response = {
-			mode = "project", path = state.fields.path.text,
-			name = state.fields.name.text, base = state.fields.base.text,
-		}
 	elseif state.mode == "rename" then
 		response = { mode = "rename", name = state.fields.name.text }
+	elseif state.mode == "base" then
+		if not string.find(state.fields.base.text, "%S") then
+			state.error = "Enter a local branch name."
+			state.focus = "base"
+			return
+		end
+		response = { mode = "base", base = state.fields.base.text }
 	else
 		if not string.find(state.fields.branch.text, "%S") then
 			state.error = "Enter a branch name."
@@ -52,16 +49,17 @@ end
 
 tern.block.define("form", {
 	init = function(_cx, args, saved)
-		local mode = if args[2] == "create" or args[2] == "rename" then args[2] else "project"
+		local mode = if args[2] == "rename" or args[2] == "base" then args[2] else "create"
 		local state = {
 			token = args[1] or "", mode = mode, project = args[3] or "",
-			base = args[4] or "master", focus = if mode == "project" then "path" elseif mode == "rename" then "name" else "branch",
+			base = args[4] or "master",
+			focus = if mode == "rename" then "name" elseif mode == "base" then "base" else "branch",
 			fields = {}, submitted = false, cancelled = false, focusScheduled = false,
 		}
 		state.fields = {
-			path = Input.new(if mode == "project" then args[3] or "" else ""),
 			name = Input.new(if mode == "rename" then args[4] or "" else ""),
-			base = Input.new(args[4] or "master"), branch = Input.new(""),
+			branch = Input.new(""),
+			base = Input.new(if mode == "base" then args[4] or "" else ""),
 		}
 		if type(saved) == "table" and saved.token == state.token and saved.mode == mode then
 			for name, field in pairs(state.fields) do
@@ -93,7 +91,7 @@ tern.block.define("form", {
 		return "Projects"
 	end,
 	view = function(state, cx)
-		local heading = if state.mode == "project" then "Add project" elseif state.mode == "rename" then "Rename worktree" else "New worktree"
+		local heading = if state.mode == "rename" then "Rename worktree" elseif state.mode == "base" then "Change base branch" else "New worktree"
 		local children = {
 			-- In a row so the link is only as wide as its text, not the whole pane.
 			ui.node("row", { key = "nav" }, {
@@ -107,17 +105,15 @@ tern.block.define("form", {
 		if state.submitted then
 			table.insert(children, text("submitted", if state.cancelled then "Returning to Projects…" else "Working…", "overseer.message"))
 		else
-			table.insert(children, text("help", if state.mode == "project"
-				then "Choose an existing Git checkout. Name and base branch are optional."
-				elseif state.mode == "rename" then "Display name only. Branch: " .. state.project .. ". Leave blank to use the branch name; Git and the directory stay unchanged."
+			table.insert(children, text("help", if state.mode == "rename"
+				then "Display name only. Branch: " .. state.project .. ". Leave blank to use the branch name; Git and the directory stay unchanged."
+				elseif state.mode == "base" then state.project .. " · New worktrees branch from this local branch. Existing worktrees are unchanged."
 				else state.project .. " · New branch from " .. state.base .. ". Worktrunk hooks will run.", "overseer.hint"))
-			local labels = { path = "Path", name = "Name (optional)", base = "Base (optional)", branch = "Branch name" }
-			local placeholders = { path = "/path/to/repository", name = "Repository name", base = "master", branch = "feature/branch-name" }
-			if state.mode == "rename" then
-				labels.name, placeholders.name = "Display name (optional)", state.project
-			elseif state.mode == "create" then
-				labels.name, placeholders.name = "Display name (optional)", "e.g. Fix onboarding"
-			end
+			local labels = { name = "Display name (optional)", branch = "Branch name", base = "Base branch" }
+			local placeholders = {
+				name = if state.mode == "rename" then state.project else "e.g. Fix onboarding",
+				branch = "feature/branch-name", base = "main",
+			}
 			for _, name in ipairs(fieldOrder(state)) do
 				table.insert(children, text(name .. "Label", labels[name], "overseer.fieldLabel"))
 				local props = Input.props(state.fields[name])
@@ -128,7 +124,7 @@ tern.block.define("form", {
 			table.insert(children, ui.node("row", { key = "buttons", role = "overseer.formButtons" }, {
 				ui.el("button", {
 					key = "submit", role = "overseer.primaryButton",
-					text = if state.mode == "project" then "Add project" elseif state.mode == "rename" then "Save name" else "Create worktree",
+					text = if state.mode == "rename" then "Save name" elseif state.mode == "base" then "Save base branch" else "Create worktree",
 					actions = { click = "submit" },
 				}),
 			}))

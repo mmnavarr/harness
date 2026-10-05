@@ -17,15 +17,19 @@ If `tern` is on your PATH, `tern plugin link "$PWD"` is equivalent. Linking relo
 ## Use
 
 1. Press **Cmd+Option+Shift+P**, or run **Open Projects** from Tern's command palette.
-2. Click **+** in the Projects header. Enter a checkout directory, optionally a display name and a local base branch. `~/` paths and linked checkouts work; duplicate repositories are detected by their canonical shared Git directory.
+2. Click **+** in the Projects header (or run **Add project** from the command palette). The macOS folder picker opens, starting beside the last project you added (or in `~/code`). Choose a repository's folder and it's added right away, named after the folder. Choosing a folder that isn't a Git repository reopens the picker there; cancelling does nothing. Linked checkouts work, and duplicates are detected by the repository's shared Git directory.
 3. Click a worktree to open its session. Each worktree is shown as a group: its name, a subtitle (the branch when renamed, otherwise the directory), and its open tabs beneath. The active session's whole group is highlighted. A filled green dot means a session is open, a **pulsing** green dot means an agent is working in it, a hollow dot means none, and amber marks running tabs or a deletion in progress. Click an indented tab to focus it. New tabs in a managed session start at its worktree root.
-4. Click **New Worktree** beside a project. Enter a new branch name and, optionally, a **Display name** (Tab moves to it). Creation runs **in the background**: its output goes to a **Create: …** tab that opens without switching to it, and Projects says when it's done.
-5. When the completion message appears, select the new worktree. On success the **Create: …** tab closes by itself; on failure it stays open showing why (press Enter there to close it). If a hook needs approval, Worktrunk waits in that tab until you answer.
-6. Right-click a worktree for **Rename**, **Add to Ice Box**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch. Deletion also runs in the background, like creation.
+4. Click **New Worktree** beside a project. Enter a new branch name and, optionally, a **Display name** (Tab moves to it). Creation runs **in the background**: its output goes to a **Create: …** tab that opens without switching to it. Native Tern notifications announce when it starts and finishes.
+5. When the completion notification appears, select the new worktree. On success the **Create: …** tab closes by itself; on failure it stays open showing why (press Enter there to close it). If a hook needs approval, Worktrunk waits in that tab until you answer.
+6. Right-click a worktree for **Rename**, **Add to Ice Box**, **Close session**, or **Delete worktree**. Rename sets a friendly Projects label; close and delete ask for confirmation. Close keeps the files; delete removes the directory but keeps the Git branch. Deletion also runs in the background, like creation. Right-click a project's name for **Change base branch**.
+
+Project additions, worktree creation/removal, renames, session closures, and action errors use native Tern notifications rather than banners at the top of Projects. Confirmation controls, form validation, and per-project discovery errors stay inline.
+
+Notification titles name the action, such as **Worktree created** or **Worktree deleted**. Descriptions contain only the affected name or a brief next step. Long names are shortened to 32 Unicode characters, including an ellipsis; their full labels remain in Projects. Failed operations point to their **Create** or **Delete** tab. Other errors give short guidance, with detailed diagnostics in Tern's log.
 
 Click the info icon immediately after the **Projects** heading to open this guide in a rendered Markdown tab. Its tooltip is **How Projects works**. The button reads the README bundled with the installed plugin, so it works offline and when you share or copy the plugin to another machine.
 
-Add project, New worktree, and Rename open **in place of the Projects panel**, like a page within it: same position, same width, so the rest of your layout never shifts. Click **← Projects** or press Esc to go back without changes; submitting returns to Projects too. While a form is showing, the Projects shortcut focuses it rather than opening a second panel. Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unicode text. Validation failures leave the form editable. **Refresh** discovers externally created/removed worktrees; an open navigator also refreshes every 15 seconds.
+New worktree, Rename, and Change base branch open **in place of the Projects panel**, like a page within it: same position, same width, so the rest of your layout never shifts. Click **← Projects** or press Esc to go back without changes; submitting returns to Projects too. While a form is showing, the Projects shortcut focuses it rather than opening a second panel. Forms support Tab/Shift+Tab, Enter, Escape, arrows, selection, Cmd+A/C, and Unicode text. Validation failures leave the form editable. **Refresh** discovers externally created/removed worktrees; an open navigator also refreshes every 15 seconds.
 
 The navigator is a native pane, not an application-wide sidebar. It opens to the left of the first terminal of a new worktree session, using approximately one-third of the width (rounded to Tern's resize increment). It is not duplicated into every tab. The shortcut returns to that session's existing navigator, even from another tab. Resize its divider using Tern's normal controls; reopening Projects or switching worktrees preserves that session's adjusted width.
 
@@ -49,11 +53,11 @@ Overseer runs the equivalent of:
 wt -C /path/to/project switch --create --base master --no-cd new-branch
 ```
 
-The project's selected base replaces `master`. With no explicit base, registration prefers local `master`, then the local branch named by `origin/HEAD`, then local `main`. If none exists, enter a local branch in the form. No fetch, pull, checkout of the primary directory, or forced overwrite occurs.
+New worktrees branch from the project's base. Overseer detects it when you add the project: local `master`, then the local branch named by `origin/HEAD`, then local `main`, then whatever branch the checkout has checked out. If the checkout is on a detached HEAD with none of those, Overseer asks you to check out a branch and add the project again. To use a different base later, right-click the project's name and choose **Change base branch**; only an existing local branch is accepted, and existing worktrees are unaffected. No fetch, pull, checkout of the primary directory, or forced overwrite occurs.
 
 Creation preserves the terminal's stdin/stdout/stderr. Overseer never supplies `--yes` or `--no-hooks`. Worktrunk handles approvals, blocking `pre-start` hooks, and background hooks normally. Declining approval may still create a worktree **without running project hooks**, as Worktrunk documents.
 
-“Worktree created” means the Worktrunk command returned zero, **not** that every setup task succeeded. Hooks can warn and exit zero, and background hooks can still be running. Some project setup scripts deliberately return zero on partial failures. Because the **Create: …** tab closes automatically on a zero exit, such warnings aren't kept on screen; check the new worktree if a setup step matters. A nonzero command status is surfaced in Projects with the tab left open, and partially created worktrees remain discoverable.
+“Worktree created” means the Worktrunk command returned zero, **not** that every setup task succeeded. Hooks can warn and exit zero, and background hooks can still be running. Some project setup scripts deliberately return zero on partial failures. Because the **Create: …** tab closes automatically on a zero exit, such warnings aren't kept on screen; check the new worktree if a setup step matters. A nonzero command status triggers a native error notification with the tab left open, and partially created worktrees remain discoverable.
 
 The outcome comes from a receipt the helper writes when it finishes, not from the terminal's state. If Tern stops reporting the setup terminal while the helper is still running (for example, after a window restart), Overseer checks the helper's process and keeps waiting. It reports a failure only when that process is gone without having written a receipt.
 
@@ -98,9 +102,9 @@ This plugin manages **local repositories**. It does not clone repositories, dele
 
 Exercised in a **real Tern desktop window**, with a separate Tern configuration and a disposable repository. Temporary hook approvals were removed afterward.
 
-- Registration of a path containing spaces, an apostrophe, and Unicode; discovery of a Git-created linked worktree.
+- Adding a project through the macOS folder picker: a folder with a space in its name was added with its current branch as base; a non-repository folder reopened the picker there; cancelling and re-adding a duplicate changed nothing. Discovery of a Git-created linked worktree.
 - Separate worktree sessions, root-directory new tabs, and reuse of sessions after plugin reload.
-- Editable invalid-path and invalid-branch errors; form draft restoration and cancellation after reload.
+- Editable invalid-branch errors; form draft restoration and cancellation after reload.
 - Interactive hook approval; a setup hook creating a marker in the new worktree.
 - Creation from `master` while the active worktree's branch had diverged.
 - Literal Unicode/shell-metacharacter branch names; zsh and Nushell launch paths.

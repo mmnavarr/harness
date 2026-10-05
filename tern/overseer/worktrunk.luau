@@ -117,28 +117,27 @@ local function discover_base(project, done)
 			elseif branches["refs/heads/main"] then
 				project.base = "main"
 			else
-				project.base = ""
+				-- Nothing conventional: use the primary checkout's current branch.
+				git(project.path, { "symbolic-ref", "--quiet", "--short", "HEAD" }, function(current, current_err, current_cx)
+					if not current then
+						done(nil, current_err, current_cx)
+						return
+					end
+					project.base = if current.status == 0 then output_line(current.stdout) else ""
+					done(project, nil, current_cx)
+				end)
+				return
 			end
 			done(project, nil, next_cx)
 		end)
 	end)
 end
 
+-- Inspects a folder chosen in the picker. done(project, err, cx, notRepo):
+-- notRepo is true when the folder isn't inside a Git checkout at all.
 function M.inspect(path, done)
-	if type(path) ~= "string" or path == "" then
-		deferred_error(done, "Enter an absolute repository path.")
-		return
-	end
-	if path == "~" or string.sub(path, 1, 2) == "~/" then
-		local home = tern.getenv("HOME")
-		if not home or home == "" then
-			deferred_error(done, "HOME is unavailable; enter an absolute repository path.")
-			return
-		end
-		path = home .. string.sub(path, 2)
-	end
-	if string.sub(path, 1, 1) ~= "/" or string.find(path, "\0", 1, true) then
-		deferred_error(done, "Enter an absolute repository path (~/ is also supported).")
+	if type(path) ~= "string" or string.sub(path, 1, 1) ~= "/" or string.find(path, "\0", 1, true) then
+		deferred_error(done, "The folder picker returned an unexpected path.")
 		return
 	end
 	git(path, { "rev-parse", "--path-format=absolute", "--git-common-dir" }, function(common, err, cx)
@@ -147,7 +146,11 @@ function M.inspect(path, done)
 			return
 		end
 		if common.status ~= 0 then
-			done(nil, command_error("Cannot open Git repository", common), cx)
+			if string.find(common.stderr or "", "not a git repository", 1, true) then
+				done(nil, "Choose a repository folder.", cx, true)
+			else
+				done(nil, command_error("Cannot open Git repository", common), cx)
+			end
 			return
 		end
 		local common_dir = output_line(common.stdout)
@@ -359,16 +362,16 @@ function M.validate_removal(project, worktree, done)
 				if current.is_main or current.path == project.path then
 					done(nil, "The primary checkout cannot be deleted.", cx)
 				elseif current.dirty then
-					done(nil, "This worktree has uncommitted or untracked files. Commit, stash, or move them before deleting.", cx)
+					done(nil, "Commit, stash, or move changes first.", cx)
 				elseif current.branch ~= worktree.branch then
-					done(nil, "This worktree's branch changed. Refresh Projects and confirm deletion again.", cx)
+					done(nil, "Branch changed. Refresh Projects.", cx)
 				else
 					done(current, nil, cx)
 				end
 				return
 			end
 		end
-		done(nil, "This worktree is no longer registered. Refresh Projects.", cx)
+		done(nil, "Worktree not found. Refresh Projects.", cx)
 	end)
 end
 

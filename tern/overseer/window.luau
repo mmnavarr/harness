@@ -9,6 +9,7 @@ local probing, dead = {}, {}
 local rendered = {}
 local collapsed = {}
 local confirmation
+local problem
 local lastRefresh = -15000
 local sequence = 0
 -- Defined after forms(); openForm starts it.
@@ -38,12 +39,22 @@ end
 
 local function requireLocal(cx)
 	if localHost(cx) then return true end
-	cx:toast("error", "Overseer manages local repositories", "Switch to the local host first.")
+	cx:toast("error", "Local host required", "Switch to the local host.")
 	return false
 end
 
-local function report(cx, text)
-	cx:toast("error", "Overseer", tostring(text))
+-- Keep variable labels short without cutting a UTF-8 character.
+local function notificationLabel(label)
+	if utf8.len(label) <= 32 then return label end
+	return label:sub(1, utf8.offset(label, 32) - 1) .. "…"
+end
+
+local function report(cx, text, title)
+	problem = tostring(text)
+	tern.log.warn(problem)
+	local description = if #problem <= 40 and not problem:find("[\r\n]")
+		then problem else "See Tern’s log for details."
+	cx:toast("error", title or "Action failed", description)
 end
 
 local function sessionsById(cx)
@@ -332,10 +343,10 @@ end
 
 local function openWorktree(cx, path)
 	if not requireLocal(cx) then return end
-	if removing(path) then report(cx, "This worktree is being deleted. Review its removal terminal."); return end
+	if removing(path) then report(cx, "Check the Delete tab.", "Deletion in progress"); return end
 	local project, worktree = findWorktree(path)
-	if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return end
-	if not tern.fs.exists(path) then report(cx, "Worktree directory is missing: " .. path); refresh(cx); return end
+	if not project then report(cx, "Worktree not found. Refresh Projects."); return end
+	if not tern.fs.exists(path) then report(cx, "Worktree directory is missing: " .. path, "Worktree unavailable"); refresh(cx); return end
 	local session = boundSession(path, sessionsById(cx))
 	if session then
 		cx.sessions:switch(session.id)
@@ -362,13 +373,13 @@ end
 local function closeGuard(cx, path)
 	local session = boundSession(path, sessionsById(cx))
 	if not session then return nil, nil end
-	if session.locked then return nil, "Unlock this session in Tern before closing or deleting it." end
+	if session.locked then return nil, "Unlock the session first." end
 	local tabs = {}
 	for _, tab in cx.session:tabs() do tabs[tab.id] = tab.session end
 	for _, job in records("jobs") do
 		local tab = cx.session:tab_of(job.pane)
 		if tab and tabs[tab] == session.id then
-			return nil, "A Worktrunk operation is still running in this session. Finish or cancel it in its terminal first."
+			return nil, "Finish or cancel the running operation."
 		end
 	end
 	return session, nil
@@ -409,7 +420,7 @@ end
 
 local function requestWorktreeAction(cx, kind, path)
 	local project, worktree = findWorktree(path)
-	if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return end
+	if not project then report(cx, "Worktree not found. Refresh Projects."); return end
 	if removing(path) then report(cx, "This worktree is already being deleted."); return end
 	local session, err = closeGuard(cx, path)
 	if err then report(cx, err); return end
@@ -443,8 +454,8 @@ local function confirmWorktreeAction(cx, id)
 	if request.kind == "close" then
 		confirmation = nil
 		local ok, err = closeManagedSession(cx, request.path)
-		if not ok then report(cx, err) else
-			cx:toast("info", "Session closed: " .. request.label, "Worktree files are unchanged.")
+		if not ok then report(cx, err, "Session closure failed") else
+			cx:toast("info", "Session closed", notificationLabel(request.label))
 			navigator(cx)
 		end
 		redraw(cx)
@@ -459,7 +470,7 @@ local function confirmWorktreeAction(cx, id)
 		if not nextCx or confirmation ~= request then return end
 		local function failed(freshCx, text)
 			confirmation = nil
-			report(freshCx, text)
+			report(freshCx, text, "Worktree deletion failed")
 			refresh(freshCx)
 		end
 		if not worktree then failed(nextCx, err); return end
@@ -494,8 +505,7 @@ local function confirmWorktreeAction(cx, id)
 		}
 		tern.kv.set("jobs", jobs)
 		confirmation = nil
-		nextCx:toast("info", "Deleting worktree: " .. request.label, "Output is in the “" .. tabName
-			.. "” tab; answer any hook approval prompt there.")
+		nextCx:toast("info", "Deleting worktree", notificationLabel(request.label))
 		redraw(nextCx)
 	end)
 end
@@ -515,7 +525,7 @@ local function openForm(cx, mode, project, worktree, opened)
 	end
 	if kind == "form" then
 		cx.layout:focus(slot)
-		cx:toast("info", "Finish or go back from the open form first")
+		cx:toast("info", "Form already open", "Finish it or go back to Projects.")
 		return
 	end
 	if not slot then
@@ -536,7 +546,7 @@ local function openForm(cx, mode, project, worktree, opened)
 			if worktree then names and names[worktree.path] or "" else project and project.base or "",
 		}, "beside")
 	end)
-	if not pane then report(cx, "The Overseer form block is unavailable. Reload the plugin."); return end
+	if not pane then report(cx, "Reload the Overseer plugin.", "Form unavailable"); return end
 	tern.kv.set("pending-form:" .. tostring(pane), {
 		token = id, mode = mode, project = project and project.id, path = worktree and worktree.path,
 	})
@@ -574,43 +584,88 @@ local function finishForm(cx, pane)
 	end
 end
 
-local function addProject(cx, pane, response)
-	wt.inspect(response.path, function(project, err, nextCx)
+-- AppleScript for macOS's native folder picker; the start folder arrives as an
+-- argument, so no path is ever spliced into the script text.
+local CHOOSE_FOLDER = {
+	"on run argv",
+	'POSIX path of (choose folder with prompt "Choose a Git repository to add to Projects" default location (POSIX file (item 1 of argv)))',
+	"end run",
+}
+
+-- Where the picker starts: beside the last project added, else ~/code, else ~.
+local function pickerStart()
+	local last = tern.kv.get("picker-start")
+	if type(last) == "string" and tern.fs.exists(last) then return last end
+	local home = tern.getenv("HOME") or "/"
+	if tern.fs.exists(home .. "/code") then return home .. "/code" end
+	return home
+end
+
+local picking = false
+-- Defined below; addPicked reopens the picker after a non-repository choice.
+local pickProject
+
+local function addPicked(cx, path)
+	wt.inspect(path, function(project, err, nextCx, notRepo)
 		if not nextCx then return end
-		if not nextCx.session:pane(pane) then finishForm(nextCx, pane); return end
-		if not project then rejectForm(nextCx, pane, err); return end
-		if response.name and response.name:match("%S") then project.name = response.name end
-		local function save(saveCx)
-			if not saveCx.session:pane(pane) then finishForm(saveCx, pane); return end
-			if project.base == "" then
-				rejectForm(saveCx, pane, "No default local base found. Enter an existing local branch in Base.")
+		if not project then
+			if notRepo then
+				-- Let them choose again, starting where they were.
+				report(nextCx, err, "Not a Git repository")
+				tern.kv.set("picker-start", path)
+				pickProject(nextCx)
+			else
+				report(nextCx, err, "Project not added")
+			end
+			return
+		end
+		for _, existing in projects() do
+			if existing.id == project.id then
+				nextCx:toast("info", "Already in Projects", notificationLabel(existing.name))
 				return
 			end
-			local all = projects()
-			for _, existing in all do
-				if existing.id == project.id then
-					rejectForm(saveCx, pane, "This repository is already registered as " .. existing.name)
-					return
-				end
-			end
-			table.insert(all, project)
-			tern.kv.set("projects", all)
-			finishForm(saveCx, pane)
-			saveCx:toast("info", "Project added: " .. project.name)
-			refresh(saveCx)
 		end
-		if response.base and response.base:match("%S") then
-			local base = response.base
-			if base:find("[%c]") or base:sub(1, 1) == "-" then rejectForm(nextCx, pane, "Enter a local base branch name."); return end
-			tern.process.run({ "git", "-C", project.path, "show-ref", "--verify", "--quiet", "refs/heads/" .. base }, { timeout_ms = 15000 }, function(result, freshCx)
-				if not freshCx then return end
-				if result.status ~= 0 then rejectForm(freshCx, pane, "Base branch does not exist locally: " .. base); return end
-				project.base = base
-				save(freshCx)
-			end)
-		else
-			save(nextCx)
+		if project.base == "" then
+			report(nextCx, "Check out a branch, then add it again.", "No base branch found")
+			return
 		end
+		local all = projects()
+		table.insert(all, project)
+		tern.kv.set("projects", all)
+		tern.kv.set("picker-start", string.match(project.path, "^(.*)/[^/]+$") or project.path)
+		nextCx:toast("info", "Project added", notificationLabel(project.name))
+		navigator(nextCx)
+	end)
+end
+
+-- Opens macOS's folder picker; choosing a Git repository adds it right away.
+function pickProject(cx)
+	if not requireLocal(cx) then return end
+	if picking then
+		cx:toast("info", "Folder picker already open", "Choose a folder or cancel it.")
+		return
+	end
+	picking = true
+	local argv = { "/usr/bin/osascript" }
+	for _, line in CHOOSE_FOLDER do
+		table.insert(argv, "-e")
+		table.insert(argv, line)
+	end
+	table.insert(argv, pickerStart())
+	-- The picker waits for the user; give up after 30 minutes untouched.
+	tern.process.run(argv, { timeout_ms = 30 * 60 * 1000 }, function(result, nextCx)
+		picking = false
+		if not nextCx then return end
+		if result.status ~= 0 then
+			-- Cancel (AppleScript error -128), timeouts, and pickers ended by a
+			-- signal (status -1, e.g. a plugin reload) need no message.
+			if result.status == -1 or string.find(result.stderr or "", "-128", 1, true) then return end
+			report(nextCx, "Couldn't open the folder picker: " .. ((result.stderr or ""):match("^%s*(.-)%s*$")), "Folder picker failed")
+			return
+		end
+		local path = (result.stdout or ""):match("^%s*(.-)%s*$")
+		if #path > 1 then path = path:gsub("/+$", "") end
+		addPicked(nextCx, path)
 	end)
 end
 
@@ -657,8 +712,7 @@ local function createWorktree(cx, pane, request, response)
 		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
-		nextCx:toast("info", "Creating worktree: " .. (displayName or response.branch), "Output is in the “"
-			.. tabName .. "” tab; answer any hook approval prompt there.")
+		nextCx:toast("info", "Creating worktree", notificationLabel(displayName or response.branch))
 		redraw(nextCx)
 	end)
 end
@@ -676,9 +730,36 @@ local function renameWorktree(cx, pane, request, response)
 	names[project.id][worktree.path] = name
 	tern.kv.set("worktree-names", names)
 	finishForm(cx, pane)
-	cx:toast("info", if name == nil then "Restored the branch label." else "Display name saved.",
-		"Git branch and directory unchanged.")
+	cx:toast("info", if name == nil then "Branch label restored" else "Worktree renamed",
+		notificationLabel(name or worktree.branch or "Detached HEAD"))
 	redraw(cx)
+end
+
+-- New worktrees branch from the project's base; only an existing local branch is accepted.
+local function changeBase(cx, pane, request, response)
+	local project = projectById(request.project)
+	if not project then rejectForm(cx, pane, "Project is no longer registered."); return end
+	local base = type(response.base) == "string" and response.base:match("^%s*(.-)%s*$") or ""
+	if base == "" or base:find("[%c%s]") or base:sub(1, 1) == "-" then
+		rejectForm(cx, pane, "Enter a local branch name, such as main."); return
+	end
+	tern.process.run({ "git", "-C", project.path, "show-ref", "--verify", "--quiet", "refs/heads/" .. base },
+		{ timeout_ms = 15000 }, function(result, nextCx)
+			if not nextCx then return end
+			if not nextCx.session:pane(pane) then finishForm(nextCx, pane); return end
+			if result.status ~= 0 then
+				rejectForm(nextCx, pane, "No local branch named " .. base .. " in " .. project.name .. ".")
+				return
+			end
+			local all = projects()
+			for _, existing in all do
+				if existing.id == project.id then existing.base = base end
+			end
+			tern.kv.set("projects", all)
+			finishForm(nextCx, pane)
+			nextCx:toast("info", "Base branch changed", notificationLabel(project.name .. " → " .. base))
+			redraw(nextCx)
+		end)
 end
 
 -- The worktree's path is only known once Worktrunk has created it, so the
@@ -719,12 +800,12 @@ local function forms(cx)
 					inflight[pane.pane] = true
 					if response.cancelled then
 						finishForm(cx, pane.pane)
-					elseif request.mode == "project" and response.mode == "project" then
-						addProject(cx, pane.pane, response)
 					elseif request.mode == "create" and response.mode == "create" then
 						createWorktree(cx, pane.pane, request, response)
 					elseif request.mode == "rename" and response.mode == "rename" then
 						renameWorktree(cx, pane.pane, request, response)
+					elseif request.mode == "base" and response.mode == "base" then
+						changeBase(cx, pane.pane, request, response)
 					else
 						rejectForm(cx, pane.pane, "Invalid form response. Please try again.")
 					end
@@ -815,23 +896,22 @@ local function checkJobs(cx)
 						local closed, closeError = true, nil
 						if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
 						if closed then
-							cx:toast("info", "Worktree deleted: " .. job.label, "Git branches kept.")
+							cx:toast("info", "Worktree deleted", notificationLabel(job.label))
 						else
-							report(cx, "Worktree deleted, but its session was left open: " .. tostring(closeError))
+							tern.log.warn("Worktree deleted, but its session was left open: " .. tostring(closeError))
+							cx:toast("error", "Worktree deleted", "Session still open. Check Tern’s log.")
 						end
 					else
-						report(cx, "Removal did not complete for " .. job.label .. ". Its session was left open; the “"
-							.. (job.tab or "Delete: " .. job.label) .. "” tab shows why.")
+						cx:toast("error", "Worktree deletion failed", "Check the Delete tab. Session kept.")
 					end
 				else
 					-- Applied on failure too: a partially created worktree keeps its label.
 					applyCreatedName(job)
 					local label = job.displayName or job.branch
 					if status == 0 then
-						cx:toast("info", "Worktree created: " .. label, "Select it in Projects to open its session.")
+						cx:toast("info", "Worktree created", notificationLabel(label))
 					else
-						cx:toast("error", "Worktree creation needs attention", "Creation did not finish successfully for " .. label .. ". The “"
-							.. (job.tab or "Create: " .. job.branch) .. "” tab shows why; a partially created worktree may still be listed.")
+						cx:toast("error", "Worktree creation failed", "Check the Create tab for details.")
 					end
 				end
 			end
@@ -844,10 +924,10 @@ local function checkJobs(cx)
 end
 
 tern.command({ id = "projects", title = "Open Projects", icon = "branch", keys = { "cmd+alt+shift+p" }, run = function(cx) navigator(cx) end })
-tern.command({ id = "add", title = "Add project", icon = "folder", run = function(cx) openForm(cx, "project") end })
+tern.command({ id = "add", title = "Add project", icon = "folder", run = function(cx) pickProject(cx) end })
 tern.command({ id = "create", title = "Create worktree", icon = "branch", run = function(cx)
 	local project = activeWorktree(cx)
-	if project then openForm(cx, "create", project) else navigator(cx); cx:toast("info", "Choose + beside a project to create a worktree") end
+	if project then openForm(cx, "create", project) else navigator(cx); cx:toast("info", "Choose a project", "Click New Worktree beside a project.") end
 end })
 
 tern.on("canvas_action", function(ev, cx)
@@ -856,7 +936,7 @@ tern.on("canvas_action", function(ev, cx)
 		return true
 	end
 	if not requireLocal(cx) then return true end
-	if ev.act == "add" then openForm(cx, "project")
+	if ev.act == "add" then pickProject(cx)
 	elseif ev.act == "refresh" then
 		-- An explicit refresh also re-checks pull requests immediately.
 		for _, entry in cache do entry.prAt = nil end
@@ -869,7 +949,7 @@ tern.on("canvas_action", function(ev, cx)
 	elseif ev.act == "Add to Ice Box" or ev.act == "Remove from Ice Box" then
 		-- Menu entries show their action verbatim, so these read as titled.
 		local project, worktree = findWorktree(view.worktreePath(ev.node))
-		if not project then report(cx, "Worktree is no longer listed. Refresh Projects."); return true end
+		if not project then report(cx, "Worktree not found. Refresh Projects."); return true end
 		local icebox = records("icebox")
 		icebox[project.id] = icebox[project.id] or {}
 		icebox[project.id][worktree.path] = if ev.act == "Add to Ice Box" then true else nil
@@ -878,10 +958,14 @@ tern.on("canvas_action", function(ev, cx)
 	elseif ev.act == "toggle-icebox" then
 		tern.kv.set("show-icebox", tern.kv.get("show-icebox") == false)
 		redraw(cx)
+	elseif ev.act == "Change base branch" then
+		local project = projectById(view.projectId(ev.node))
+		if project then openForm(cx, "base", project)
+		else report(cx, "Project not found. Refresh Projects.") end
 	elseif ev.act == "rename" then
 		local project, worktree = findWorktree(view.worktreePath(ev.node))
 		if project then openForm(cx, "rename", project, worktree)
-		else report(cx, "Worktree is no longer listed. Refresh Projects.") end
+		else report(cx, "Worktree not found. Refresh Projects.") end
 	elseif ev.act == "close-session" then
 		requestWorktreeAction(cx, "close", view.worktreePath(ev.node))
 	elseif ev.act == "delete-worktree" then
