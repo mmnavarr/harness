@@ -54,8 +54,9 @@ local function sessionsById(cx)
 	return result
 end
 
-local function boundSession(path, sessions)
-	local binding = records("sessions")[path]
+-- `bindings` lets a caller that checks many worktrees read the store once.
+local function boundSession(path, sessions, bindings)
+	local binding = (bindings or records("sessions"))[path]
 	if binding then
 		local session = sessions[tostring(binding.id)]
 		if session and session.host == binding.host then return session end
@@ -74,8 +75,8 @@ local function activeWorktree(cx)
 	return nil, nil
 end
 
-local function removing(path)
-	for _, job in records("jobs") do
+local function removing(path, jobs)
+	for _, job in jobs or records("jobs") do
 		if job.kind == "remove" and job.path == path then return true end
 	end
 	return false
@@ -126,6 +127,7 @@ end
 local function model(cx)
 	local sessions = sessionsById(cx)
 	local names = records("worktree-names")
+	local bindings, jobs = records("sessions"), records("jobs")
 	local icebox = records("icebox")
 	local showIcebox = tern.kv.get("show-icebox") ~= false
 	local working = workingSessions(cx)
@@ -152,10 +154,10 @@ local function model(cx)
 		local iced = {}
 		for _, worktree in (entry and entry.worktrees or {}) do
 			local item = table.clone(worktree)
-			item.deleting = removing(worktree.path)
+			item.deleting = removing(worktree.path, jobs)
 			item.displayName = names[project.id] and names[project.id][worktree.path]
 			item.pr = not worktree.is_main and worktree.branch and entry.prs and entry.prs[worktree.branch] or nil
-			local session = boundSession(worktree.path, sessions)
+			local session = boundSession(worktree.path, sessions, bindings)
 			item.session, item.tabs = session, session and tabs[tostring(session.id)] or {}
 			item.agentWorking = session ~= nil and working[tostring(session.id)] == true
 			local active = session ~= nil and session.id == current.id
@@ -888,6 +890,20 @@ tern.chrome.status(function()
 	return { { text = "Projects", icon = "branch", command = "plugin.overseer.projects" } }
 end)
 
+-- Runs fn in a timer callback of its own, reporting (not raising) errors.
+-- Tern gives every callback its own 50 ms budget and disables a plugin's timers
+-- after an overrun, so no single callback should carry all of a tick's work.
+local function separately(fn)
+	tern.timer(0, function(cx)
+		if not cx then return end
+		local ok, err = pcall(fn, cx)
+		if not ok then
+			local text = tostring(err)
+			if problem ~= text then report(cx, text) end
+		end
+	end)
+end
+
 local function tick(cx)
 	local ok, err = pcall(function()
 		if not localHost(cx) then return end
@@ -895,8 +911,11 @@ local function tick(cx)
 		-- Resumes fast form checks after a plugin reload left a form open.
 		watchForms()
 		checkJobs(cx)
-		if tern.now() - lastRefresh >= 15000 and #cx.canvas:list() > 0 then refresh(cx) end
-		redraw(cx)
+		if tern.now() - lastRefresh >= 15000 and #cx.canvas:list() > 0 then
+			lastRefresh = tern.now()
+			separately(refresh)
+		end
+		separately(redraw)
 	end)
 	if not ok then
 		local text = tostring(err)
