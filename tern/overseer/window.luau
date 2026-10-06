@@ -979,7 +979,7 @@ tern.command({ id = "projects", title = "Open Projects", icon = "branch", keys =
 tern.command({ id = "add", title = "Add project", icon = "folder", run = function(cx) pickProject(cx) end })
 tern.command({ id = "create", title = "Create worktree", icon = "branch", run = function(cx)
 	local project = activeWorktree(cx)
-	if project then openForm(cx, "create", project) else navigator(cx); cx:toast("info", "Choose a project", "Click New Worktree beside a project.") end
+	if project then openForm(cx, "create", project) else navigator(cx); cx:toast("info", "Choose a project", "Click + beside a project's name.") end
 end })
 
 tern.on("canvas_action", function(ev, cx)

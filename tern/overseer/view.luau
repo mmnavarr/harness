@@ -268,8 +268,8 @@ function View.render(model)
 					"collapse=" .. project.id, (if collapsed then "Expand " else "Collapse ") .. project.name,
 					"overseer.projectToggle"),
 				text("count", tostring(project.total), "overseer.count"),
+				button("create", "+", "create=" .. project.id, "New worktree from " .. project.base, "overseer.iconButton"),
 				ui.node("row", { key = "spacer", grow = 1 }, {}),
-				button("create", "New Worktree", "create=" .. project.id, "Create a worktree from " .. project.base),
 			}),
 			text("path", project.path, "overseer.projectPath", { title = project.path }),
 		}
