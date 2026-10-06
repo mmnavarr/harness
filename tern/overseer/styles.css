@@ -237,6 +237,24 @@
   background-repeat: no-repeat;
   background-position: center;
 }
+/* ↻ during an explicit refresh. */
+[data-role='overseer.refreshGlyph'],
+[data-role='overseer.refreshGlyphSpin'] {
+  display: inline-block;
+}
+[data-role='overseer.refreshGlyphSpin'] {
+  animation: overseer-spin 0.8s linear infinite;
+}
+@keyframes overseer-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-role='overseer.refreshGlyphSpin'] {
+    animation: none;
+    opacity: 0.5;
+  }
+}
 /* A project's worktrees are loading: a shimmering label, centered where its rows will appear. */
 [data-role='overseer.loading'] {
   align-items: center;

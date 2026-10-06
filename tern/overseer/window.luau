@@ -11,6 +11,8 @@ local collapsed = {}
 local confirmation
 local problem
 local lastRefresh = -15000
+-- Whether ↻ is spinning for an explicit refresh.
+local spinning = false
 local sequence = 0
 -- Defined after forms(); openForm starts it.
 local watchForms
@@ -202,7 +204,7 @@ local function model(cx)
 	local tabs = tabRows(cx, activity)
 	local result = {
 		projects = {}, collapsed = collapsed, confirmation = confirmation,
-		showIcebox = showIcebox,
+		showIcebox = showIcebox, refreshing = spinning,
 	}
 	local current = cx.sessions:current()
 	for _, project in projects() do
@@ -286,8 +288,10 @@ local function refreshPullRequests(project, entry)
 	end)
 end
 
-local function refresh(cx)
+-- `done` runs once every worktree listing this call started has finished.
+local function refresh(cx, done)
 	lastRefresh = tern.now()
+	local pending = 0
 	for _, project in projects() do
 		local entry = cache[project.id]
 		if not entry then
@@ -296,15 +300,39 @@ local function refresh(cx)
 		end
 		if not entry.loading then
 			entry.loading = true
+			pending += 1
 			wt.list(project, function(worktrees, err, nextCx)
 				entry.loading, entry.error = false, err
 				if worktrees then entry.worktrees = worktrees end
+				pending -= 1
+				if pending == 0 and done and nextCx then done(nextCx) end
 				if nextCx then redraw(nextCx) end
 				if worktrees then refreshPullRequests(project, entry) end
 			end)
 		end
 	end
+	if pending == 0 and done then done(cx) end
 	redraw(cx)
+end
+
+-- ↻ spins from an explicit refresh until its worktree listings finish, and
+-- for at least one turn so a fast refresh is still visible.
+local SPIN_MIN_MS = 800
+
+local function refreshByHand(cx)
+	if spinning then return end
+	spinning = true
+	local started = tern.now()
+	-- An explicit refresh also re-checks pull requests immediately.
+	for _, entry in cache do entry.prAt = nil end
+	refresh(cx, function(doneCx)
+		local function stop(stopCx)
+			spinning = false
+			if stopCx then redraw(stopCx) end
+		end
+		local left = started + SPIN_MIN_MS - tern.now()
+		if left > 0 then tern.timer(left, stop) else stop(doneCx) end
+	end)
 end
 
 local function navigatorSplit(tree, pane)
@@ -990,9 +1018,7 @@ tern.on("canvas_action", function(ev, cx)
 	if not requireLocal(cx) then return true end
 	if ev.act == "add" then pickProject(cx)
 	elseif ev.act == "refresh" then
-		-- An explicit refresh also re-checks pull requests immediately.
-		for _, entry in cache do entry.prAt = nil end
-		refresh(cx)
+		refreshByHand(cx)
 	elseif ev.act == "collapse" then collapsed[ev.value] = not collapsed[ev.value]; redraw(cx)
 	elseif ev.act == "create" then
 		local project = projectById(ev.value)

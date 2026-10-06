@@ -223,7 +223,14 @@ function View.render(model)
 				}),
 			}),
 			button("add", "+", "add", "Add an existing Git repository", "overseer.iconButton"),
-			button("refresh", "↻", "refresh", "Refresh worktrees and sessions", "overseer.iconButton"),
+			-- The glyph is its own element so only the arrow turns, not the button's frame.
+			ui.el("button", {
+				key = "refresh", role = "overseer.iconButton", actions = { click = "refresh" },
+				title = if model.refreshing then "Refreshing…" else "Refresh worktrees and sessions",
+				aria = if model.refreshing then "Refreshing" else "Refresh worktrees and sessions",
+			}, {
+				text("glyph", "↻", if model.refreshing then "overseer.refreshGlyphSpin" else "overseer.refreshGlyph"),
+			}),
 			button("icebox", "🧊", "toggle-icebox",
 				if model.showIcebox then "Hide Ice Box worktrees" else "Show Ice Box worktrees",
 				if model.showIcebox then "overseer.iconButtonOn" else "overseer.iconButton"),
