@@ -2,11 +2,33 @@ local ui = tern.ui
 local Input = require("./input")
 
 local function text(key, value, role)
-	return ui.node("text", { key = key, text = value, role = role or "overseer.label" })
+	return ui.node("text", { key = key, text = value, role = role })
 end
 
+-- Everything that differs between the form's modes. The first field takes focus.
+local MODES = {
+	create = {
+		heading = "New worktree", submit = "Create worktree", fields = { "branch", "name" },
+		help = function(state)
+			return state.project .. " · New branch from " .. state.base .. ". Worktrunk hooks will run."
+		end,
+	},
+	rename = {
+		heading = "Rename worktree", submit = "Save name", fields = { "name" },
+		help = function(state)
+			return "Display name only. Branch: " .. state.project .. ". Leave blank to use the branch name; Git and the directory stay unchanged."
+		end,
+	},
+	base = {
+		heading = "Change base branch", submit = "Save base branch", fields = { "base" },
+		help = function(state)
+			return state.project .. " · New worktrees branch from this local branch. Existing worktrees are unchanged."
+		end,
+	},
+}
+
 local function fieldOrder(state)
-	return if state.mode == "rename" then { "name" } elseif state.mode == "base" then { "base" } else { "branch", "name" }
+	return MODES[state.mode].fields
 end
 
 local function focus(state, cx)
@@ -49,12 +71,12 @@ end
 
 tern.block.define("form", {
 	init = function(_cx, args, saved)
-		local mode = if args[2] == "rename" or args[2] == "base" then args[2] else "create"
+		local mode = if MODES[args[2]] then args[2] else "create"
 		local state = {
 			token = args[1] or "", mode = mode, project = args[3] or "",
 			base = args[4] or "master",
-			focus = if mode == "rename" then "name" elseif mode == "base" then "base" else "branch",
-			fields = {}, submitted = false, cancelled = false, focusScheduled = false,
+			focus = MODES[mode].fields[1],
+			submitted = false, cancelled = false, focusScheduled = false,
 		}
 		state.fields = {
 			name = Input.new(if mode == "rename" then args[4] or "" else ""),
@@ -62,7 +84,7 @@ tern.block.define("form", {
 			base = Input.new(if mode == "base" then args[4] or "" else ""),
 		}
 		if type(saved) == "table" and saved.token == state.token and saved.mode == mode then
-			for name, field in pairs(state.fields) do
+			for name in pairs(state.fields) do
 				if type(saved.fields) == "table" and type(saved.fields[name]) == "string" then
 					state.fields[name] = Input.new(saved.fields[name])
 				end
@@ -91,7 +113,7 @@ tern.block.define("form", {
 		return "Projects"
 	end,
 	view = function(state, cx)
-		local heading = if state.mode == "rename" then "Rename worktree" elseif state.mode == "base" then "Change base branch" else "New worktree"
+		local heading = MODES[state.mode].heading
 		local children = {
 			-- In a row so the link is only as wide as its text, not the whole pane.
 			ui.node("row", { key = "nav" }, {
@@ -105,10 +127,7 @@ tern.block.define("form", {
 		if state.submitted then
 			table.insert(children, text("submitted", if state.cancelled then "Returning to Projects…" else "Working…", "overseer.message"))
 		else
-			table.insert(children, text("help", if state.mode == "rename"
-				then "Display name only. Branch: " .. state.project .. ". Leave blank to use the branch name; Git and the directory stay unchanged."
-				elseif state.mode == "base" then state.project .. " · New worktrees branch from this local branch. Existing worktrees are unchanged."
-				else state.project .. " · New branch from " .. state.base .. ". Worktrunk hooks will run.", "overseer.hint"))
+			table.insert(children, text("help", MODES[state.mode].help(state), "overseer.hint"))
 			local labels = { name = "Display name (optional)", branch = "Branch name", base = "Base branch" }
 			local placeholders = {
 				name = if state.mode == "rename" then state.project else "e.g. Fix onboarding",
@@ -124,7 +143,7 @@ tern.block.define("form", {
 			table.insert(children, ui.node("row", { key = "buttons", role = "overseer.formButtons" }, {
 				ui.el("button", {
 					key = "submit", role = "overseer.primaryButton",
-					text = if state.mode == "rename" then "Save name" elseif state.mode == "base" then "Save base branch" else "Create worktree",
+					text = MODES[state.mode].submit,
 					actions = { click = "submit" },
 				}),
 			}))

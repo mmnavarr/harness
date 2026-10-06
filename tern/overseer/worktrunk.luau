@@ -1,4 +1,4 @@
--- Read-only discovery uses argv subprocesses; creation alone runs in a terminal.
+-- Read-only discovery uses argv subprocesses; creation and removal run in a terminal.
 local M = {}
 local TIMEOUT_MS = 15000
 
@@ -284,7 +284,7 @@ local function parse_worktrees(text, project)
 			local diff = type(changes.diff) == "table" and changes.diff or {}
 			table.insert(trees, {
 				path = path, branch = if detached then nil else row.branch, is_main = main or path == project.path,
-				detached = detached, dirty = dirty, conflicts = conflicts,
+				dirty = dirty, conflicts = conflicts,
 				changes = {
 					staged = changes.staged, modified = changes.modified, untracked = changes.untracked,
 					renamed = changes.renamed, deleted = changes.deleted,

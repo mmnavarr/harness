@@ -581,7 +581,7 @@ local function confirmWorktreeAction(cx, id)
 		jobs[jobId] = {
 			kind = "remove", project = project.id, path = worktree.path, branch = worktree.branch,
 			label = request.label, receipt = receipt, pane = terminal, started = os.time(),
-			session = target, tab = tabName,
+			session = target,
 		}
 		tern.kv.set("jobs", jobs)
 		confirmation = nil
@@ -771,7 +771,7 @@ local function createWorktree(cx, pane, request, response)
 		if not ok then rejectForm(nextCx, pane, err); return end
 		local jobs = records("jobs")
 		for _, job in jobs do
-			if job.project == project.id and job.branch == response.branch and not job.status then
+			if job.project == project.id and job.branch == response.branch then
 				rejectForm(nextCx, pane, "Creation is already running. Check its setup terminal.")
 				return
 			end
@@ -788,7 +788,7 @@ local function createWorktree(cx, pane, request, response)
 		if tab then nextCx.layout:name_tab(tab, tabName) end
 		jobs[id] = {
 			kind = "create", project = project.id, branch = response.branch, displayName = displayName,
-			receipt = receipt, pane = terminal, started = os.time(), tab = tabName,
+			receipt = receipt, pane = terminal, started = os.time(),
 		}
 		tern.kv.set("jobs", jobs)
 		finishForm(nextCx, pane)
@@ -896,8 +896,8 @@ local function forms(cx)
 end
 
 -- Forms post their responses through kv, which has no change notification.
--- While one is open, check every 100 ms (forms() alone, which only reads kv)
--- so Back and Submit feel immediate; the 750 ms tick covers everything else.
+-- While one is open, check every 100 ms so Back and Submit feel immediate;
+-- the 750 ms tick covers everything else.
 local watching = false
 watchForms = function()
 	if watching then return end
@@ -942,57 +942,55 @@ local function checkJobs(cx)
 	local jobs = records("jobs")
 	local changed = false
 	for id, job in jobs do
-		if not job.status then
-			local status
-			if tern.fs.exists(job.receipt) then
-				status = tonumber(tern.fs.read(job.receipt))
-				if status == nil then status = -1 end
-				tern.fs.remove(job.receipt)
-			else
-				local pane = cx.session:pane(job.pane)
-				if (not pane or pane.exited ~= nil or pane.error) and helperFailed(id, job) then status = -1 end
-			end
-			-- On success the output tab has served its purpose: close it (its helper is
-			-- only waiting for Enter). Failures keep it open with the error on screen,
-			-- including a deletion that reported success but left its directory.
-			local succeeded = status == 0 and (job.kind ~= "remove" or not tern.fs.exists(job.path))
-			if succeeded and cx.session:pane(job.pane) then cx.layout:close(job.pane) end
-			if status ~= nil then
-				jobs[id], changed = nil, true
-				probing[id], dead[id] = nil, nil
-				if tern.fs.exists(job.receipt .. ".pid") then tern.fs.remove(job.receipt .. ".pid") end
-				if job.kind == "remove" then
-					if status == 0 and not tern.fs.exists(job.path) then
-						local names = records("worktree-names")
-						if names[job.project] then
-							names[job.project][job.path] = nil
-							tern.kv.set("worktree-names", names)
-						end
-						local icebox = records("icebox")
-						if icebox[job.project] then
-							icebox[job.project][job.path] = nil
-							tern.kv.set("icebox", icebox)
-						end
-						local closed, closeError = true, nil
-						if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
-						if closed then
-							cx:toast("info", "Worktree deleted", notificationLabel(job.label))
-						else
-							tern.log.warn("Worktree deleted, but its session was left open: " .. tostring(closeError))
-							cx:toast("error", "Worktree deleted", "Session still open. Check Tern’s log.")
-						end
+		local status
+		if tern.fs.exists(job.receipt) then
+			status = tonumber(tern.fs.read(job.receipt))
+			if status == nil then status = -1 end
+			tern.fs.remove(job.receipt)
+		else
+			local pane = cx.session:pane(job.pane)
+			if (not pane or pane.exited ~= nil or pane.error) and helperFailed(id, job) then status = -1 end
+		end
+		-- On success the output tab has served its purpose: close it (its helper is
+		-- only waiting for Enter). Failures keep it open with the error on screen,
+		-- including a deletion that reported success but left its directory.
+		local succeeded = status == 0 and (job.kind ~= "remove" or not tern.fs.exists(job.path))
+		if succeeded and cx.session:pane(job.pane) then cx.layout:close(job.pane) end
+		if status ~= nil then
+			jobs[id], changed = nil, true
+			probing[id], dead[id] = nil, nil
+			if tern.fs.exists(job.receipt .. ".pid") then tern.fs.remove(job.receipt .. ".pid") end
+			if job.kind == "remove" then
+				if status == 0 and not tern.fs.exists(job.path) then
+					local names = records("worktree-names")
+					if names[job.project] then
+						names[job.project][job.path] = nil
+						tern.kv.set("worktree-names", names)
+					end
+					local icebox = records("icebox")
+					if icebox[job.project] then
+						icebox[job.project][job.path] = nil
+						tern.kv.set("icebox", icebox)
+					end
+					local closed, closeError = true, nil
+					if job.session then closed, closeError = closeManagedSession(cx, job.path, job.session) end
+					if closed then
+						cx:toast("info", "Worktree deleted", notificationLabel(job.label))
 					else
-						cx:toast("error", "Worktree deletion failed", "Check the Delete tab. Session kept.")
+						tern.log.warn("Worktree deleted, but its session was left open: " .. tostring(closeError))
+						cx:toast("error", "Worktree deleted", "Session still open. Check Tern’s log.")
 					end
 				else
-					-- Applied on failure too: a partially created worktree keeps its label.
-					applyCreatedName(job)
-					local label = job.displayName or job.branch
-					if status == 0 then
-						cx:toast("info", "Worktree created", notificationLabel(label))
-					else
-						cx:toast("error", "Worktree creation failed", "Check the Create tab for details.")
-					end
+					cx:toast("error", "Worktree deletion failed", "Check the Delete tab. Session kept.")
+				end
+			else
+				-- Applied on failure too: a partially created worktree keeps its label.
+				applyCreatedName(job)
+				local label = job.displayName or job.branch
+				if status == 0 then
+					cx:toast("info", "Worktree created", notificationLabel(label))
+				else
+					cx:toast("error", "Worktree creation failed", "Check the Create tab for details.")
 				end
 			end
 		end
@@ -1040,13 +1038,13 @@ tern.on("canvas_action", function(ev, cx)
 		local project = projectById(view.projectId(ev.node))
 		if project then openForm(cx, "base", project)
 		else report(cx, "Project not found. Refresh Projects.") end
-	elseif ev.act == "rename" then
+	elseif ev.act == "Rename" then
 		local project, worktree = findWorktree(view.worktreePath(ev.node))
 		if project then openForm(cx, "rename", project, worktree)
 		else report(cx, "Worktree not found. Refresh Projects.") end
-	elseif ev.act == "close-session" then
+	elseif ev.act == "Close session" then
 		requestWorktreeAction(cx, "close", view.worktreePath(ev.node))
-	elseif ev.act == "delete-worktree" then
+	elseif ev.act == "Delete worktree" then
 		requestWorktreeAction(cx, "delete", view.worktreePath(ev.node))
 	elseif ev.act == "confirm" then confirmWorktreeAction(cx, ev.value)
 	elseif ev.act == "cancel" then

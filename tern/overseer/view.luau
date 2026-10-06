@@ -26,7 +26,7 @@ end
 
 local function text(key, value, role, props)
 	props = props or {}
-	props.key, props.text, props.role = key, value, role or "overseer.label"
+	props.key, props.text, props.role = key, value, role
 	return ui.node("text", props)
 end
 
@@ -110,13 +110,13 @@ local function worktreeNode(worktree, activePath)
 	local active = activePath == worktree.path
 	local menu = {}
 	if not worktree.deleting then
-		table.insert(menu, "rename")
-		-- Plain-text actions appear verbatim in the menu.
+		-- Menu entries show their action string verbatim, so actions are titled.
+		table.insert(menu, "Rename")
 		if not worktree.is_main then
 			table.insert(menu, if worktree.iced then "Remove from Ice Box" else "Add to Ice Box")
 		end
-		if worktree.session then table.insert(menu, "close-session") end
-		if not worktree.is_main then table.insert(menu, "delete-worktree") end
+		if worktree.session then table.insert(menu, "Close session") end
+		if not worktree.is_main then table.insert(menu, "Delete worktree") end
 	end
 	local status
 	if worktree.iced then

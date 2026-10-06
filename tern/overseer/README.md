@@ -120,12 +120,12 @@ Exercised in a **real Tern desktop window**, with a separate Tern configuration 
 - Real omp agent blocks: idle, working, and waiting on an ask prompt, reflected in the worktree dot and the tab row (titled after the omp conversation rather than "Projects").
 - Creation still worked through the renamed helper with a literal Unicode/shell-metacharacter branch. Detached deletion exercised empty-argument encoding under macOS Bash 3.2.
 
-The helper also passes `bash -n`. Run the nine real Git/Worktrunk regression tests with Python 3:
+The helper also passes `bash -n`. Run the ten real Git/Worktrunk regression tests with Python 3:
 
 ```sh
 python3 -B tests/test_worktree_operation.py -v
 ```
 
-Tests use temporary repositories, configuration, and approvals. They cover staged/untracked-file protection, primary and foreign-repository rejection, branch changes after confirmation, failing removal hooks, retention of unmerged branches, removal of ignored files, detached worktree removal, and creation from the selected base with literal shell metacharacters.
+Tests use temporary repositories, configuration, and approvals. They cover staged/untracked-file protection, primary and foreign-repository rejection, branch changes after confirmation, failing removal hooks, retention of unmerged branches, removal of ignored files, detached worktree removal, creation from the selected base with literal shell metacharacters, and the helper's PID file and completion receipt.
 
 These checks are not a claim of exhaustive compatibility across Tern versions or multiple-window concurrency.

@@ -106,18 +106,15 @@
 [data-role='overseer.tabRow'].sf-act {
   cursor: pointer;
 }
-[data-role='overseer.branch'] {
-  min-width: 0;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+[data-role='overseer.branch'],
 [data-role='overseer.tabName'] {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+[data-role='overseer.branch'] {
+  font-weight: 600;
 }
 [data-role='overseer.dotOpen'],
 [data-role='overseer.dotIdle'],
