@@ -111,26 +111,86 @@ local function runsAgent(line)
 	return false
 end
 
--- Session ids (as strings) with an agent working right now. Agent CLIs in
--- terminals report progress while a turn runs; Tern exposes that as `busy`
--- (a CLI that hasn't reported progress yet counts as busy while it runs).
--- Tern's own agent blocks report their state directly.
-local function workingSessions(cx)
+-- Agent activity in this window: "waiting" (it asked you something) or
+-- "working", per session id (as a string), per tab id and per pane id, plus
+-- window-wide counts. Native agent blocks such as omp report their state;
+-- their `busy` stays set while they sit idle, so it isn't consulted for them.
+-- Agent CLIs in plain terminals only report progress, which Tern exposes as
+-- `busy` (a CLI that hasn't reported progress yet counts as busy while it runs).
+local function agentActivity(cx)
 	local tabSession = {}
 	for _, tab in cx.session:tabs() do tabSession[tab.id] = tostring(tab.session) end
-	local working = {}
-	for _, pane in cx.session:panes() do
-		if pane.busy and pane.running and pane.tab and runsAgent(pane.running.line) then
-			working[tabSession[pane.tab] or ""] = true
-		end
+	local activity = { sessions = {}, tabs = {}, panes = {}, working = 0, waiting = 0 }
+	local function mark(pane, tab, state)
+		activity.panes[pane] = state
+		activity[state] += 1
+		-- Waiting wins: it is the state that needs you.
+		local session = tabSession[tab] or ""
+		if activity.sessions[session] ~= "waiting" then activity.sessions[session] = state end
+		if activity.tabs[tab] ~= "waiting" then activity.tabs[tab] = state end
 	end
 	for _, agent in cx.agents:list() do
-		if agent.state == "working" then
-			local info = cx.session:pane(agent.pane)
-			if info and info.tab then working[tabSession[info.tab] or ""] = true end
+		local state = if agent.state == "waiting_input" then "waiting"
+			elseif agent.state == "working" then "working"
+			else nil
+		local info = state and cx.session:pane(agent.pane)
+		if info and info.tab then mark(agent.pane, info.tab, state) end
+	end
+	for _, pane in cx.session:panes() do
+		if pane.kind ~= "agent" and not activity.panes[pane.pane] and pane.busy and pane.running
+			and pane.tab and runsAgent(pane.running.line) then
+			mark(pane.pane, pane.tab, "working")
 		end
 	end
-	return working
+	return activity
+end
+
+-- What a tab row is called: the name the user gave the tab, else the title of
+-- the pane doing its work. The focused pane is often a plugin block, such as
+-- this navigator, so terminals and agents are preferred over plugin blocks.
+local function tabRows(cx, activity)
+	local panesByTab = {}
+	for _, pane in cx.session:panes() do
+		if pane.tab then
+			panesByTab[pane.tab] = panesByTab[pane.tab] or {}
+			table.insert(panesByTab[pane.tab], pane)
+		end
+	end
+	local rows = {}
+	for _, tab in cx.session:tabs() do
+		local panes = panesByTab[tab.id] or {}
+		local chosen, hasAgent = nil, false
+		for _, pane in panes do
+			if pane.kind == "agent" then hasAgent = true end
+		end
+		for _, pane in panes do
+			if pane.pane == tab.pane and pane.kind ~= "plugin" then chosen = pane; break end
+		end
+		if not chosen then
+			for _, pane in panes do
+				if pane.kind == "terminal" or pane.kind == "agent" then chosen = pane; break end
+			end
+		end
+		if not chosen then
+			for _, pane in panes do
+				if pane.kind ~= "plugin" then chosen = pane; break end
+			end
+		end
+		local title = chosen and chosen.title or tab.title
+		if (not title or title == "") and chosen then
+			title = chosen.running and chosen.running.line or chosen.program
+		end
+		local key = tostring(tab.session)
+		rows[key] = rows[key] or {}
+		table.insert(rows[key], {
+			id = tab.id, pane = tab.pane,
+			name = if tab.name and tab.name ~= "" then tab.name elseif title and title ~= "" then title else "Terminal",
+			agent = activity.tabs[tab.id],
+			-- An agent block keeps its tab busy even while idle; its state says more.
+			busy = tab.busy and not hasAgent,
+		})
+	end
+	return rows
 end
 
 local function model(cx)
@@ -139,15 +199,8 @@ local function model(cx)
 	local bindings, jobs = records("sessions"), records("jobs")
 	local icebox = records("icebox")
 	local showIcebox = tern.kv.get("show-icebox") ~= false
-	local working = workingSessions(cx)
-	local tabs = {}
-	for _, tab in cx.session:tabs() do
-		local key = tostring(tab.session)
-		tabs[key] = tabs[key] or {}
-		table.insert(tabs[key], {
-			id = tab.id, pane = tab.pane, name = tab.name or tab.title or "Terminal", busy = tab.busy,
-		})
-	end
+	local activity = agentActivity(cx)
+	local tabs = tabRows(cx, activity)
 	local result = {
 		projects = {}, collapsed = collapsed, confirmation = confirmation,
 		showIcebox = showIcebox,
@@ -168,7 +221,7 @@ local function model(cx)
 			item.pr = not worktree.is_main and worktree.branch and entry.prs and entry.prs[worktree.branch] or nil
 			local session = boundSession(worktree.path, sessions, bindings)
 			item.session, item.tabs = session, session and tabs[tostring(session.id)] or {}
-			item.agentWorking = session ~= nil and working[tostring(session.id)] == true
+			item.agent = session and activity.sessions[tostring(session.id)]
 			local active = session ~= nil and session.id == current.id
 			if active then result.activePath = worktree.path end
 			item.iced = not worktree.is_main and icebox[project.id] ~= nil and icebox[project.id][worktree.path] == true
@@ -988,9 +1041,25 @@ tern.override("new_tab", function(cx)
 	return true
 end)
 
+-- Formatters get no window context, so `updateStatus` (run from the tick)
+-- caches the segment and asks Tern to redraw the status line when it changes.
+local statusSegment = { text = "Projects", icon = "branch", command = "plugin.overseer.projects" }
+
 tern.chrome.status(function()
-	return { { text = "Projects", icon = "branch", command = "plugin.overseer.projects" } }
+	return { statusSegment }
 end)
+
+local function updateStatus(cx)
+	local activity = agentActivity(cx)
+	local parts = {}
+	if activity.working > 0 then table.insert(parts, `{activity.working} working`) end
+	if activity.waiting > 0 then table.insert(parts, `{activity.waiting} waiting`) end
+	local text = if #parts > 0 then table.concat(parts, " · ") else "Projects"
+	local tone = if activity.waiting > 0 then "warning" else nil
+	if text == statusSegment.text and tone == statusSegment.tone then return end
+	statusSegment = { text = text, icon = "branch", tone = tone, command = "plugin.overseer.projects" }
+	tern.chrome.refresh()
+end
 
 -- Runs fn in a timer callback of its own, reporting (not raising) errors.
 -- Tern gives every callback its own 50 ms budget and disables a plugin's timers
@@ -1017,6 +1086,7 @@ local function tick(cx)
 			lastRefresh = tern.now()
 			separately(refresh)
 		end
+		separately(updateStatus)
 		separately(redraw)
 	end)
 	if not ok then

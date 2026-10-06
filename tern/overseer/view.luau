@@ -73,7 +73,9 @@ local function worktreeNode(worktree, activePath)
 		local role, title = "overseer.dotIdle", "No session"
 		if worktree.deleting then
 			role, title = "overseer.dotBusy", "Deleting"
-		elseif worktree.agentWorking then
+		elseif worktree.agent == "waiting" then
+			role, title = "overseer.dotWaiting", "Agent waiting for you"
+		elseif worktree.agent == "working" then
 			role, title = "overseer.dotAgent", "Agent working"
 		elseif worktree.session then
 			role, title = "overseer.dotOpen", "Session open"
@@ -110,7 +112,10 @@ local function worktreeNode(worktree, activePath)
 		else basename(worktree.path)
 	local summary = ui.node("col", {
 		key = "row", role = "overseer.worktreeRow", title = branch .. "\n" .. worktree.path,
-		aria = label .. (if worktree.agentWorking then ", agent working" elseif worktree.session then ", session open" else ", open session")
+		aria = label .. (if worktree.agent == "waiting" then ", agent waiting for you"
+				elseif worktree.agent == "working" then ", agent working"
+				elseif worktree.session then ", session open"
+				else ", open session")
 			.. (if worktree.iced then ", in the Ice Box" else ""),
 		actions = { click = if worktree.deleting then nil else "open=" .. worktree.path, menu = menu },
 	}, {
@@ -120,10 +125,17 @@ local function worktreeNode(worktree, activePath)
 	local children = { summary }
 	for _, tab in ipairs(worktree.tabs or {}) do
 		local tabChildren = {
-			dot("dot", if tab.busy then "overseer.dotBusy" else "overseer.dotTab"),
+			dot("dot", if tab.agent == "waiting" then "overseer.dotTabWaiting"
+				elseif tab.agent == "working" then "overseer.dotTabAgent"
+				elseif tab.busy then "overseer.dotBusy"
+				else "overseer.dotTab"),
 			text("name", tab.name, "overseer.tabName", { grow = 1 }),
 		}
-		if tab.busy then
+		if tab.agent == "waiting" then
+			table.insert(tabChildren, text("state", "waiting", "overseer.waiting"))
+		elseif tab.agent == "working" then
+			table.insert(tabChildren, text("state", "working", "overseer.working"))
+		elseif tab.busy then
 			table.insert(tabChildren, text("busy", "running", "overseer.busy"))
 		end
 		if not tab.pane then
