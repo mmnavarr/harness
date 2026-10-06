@@ -193,6 +193,7 @@
 }
 [data-role='overseer.badge'],
 [data-role='overseer.badgeWarn'] {
+  flex-shrink: 0;
   font-size: 0.75em;
   padding: 1px 6px;
   border-radius: 999px;
@@ -207,6 +208,8 @@
   color: var(--accent);
   font-size: 0.8em;
   opacity: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 [data-role='overseer.worktree']:hover [data-role='overseer.openHint'] {
   opacity: 1;
@@ -236,14 +239,8 @@
   color: var(--warn);
   font-size: 0.8em;
 }
-[data-role='overseer.working'],
 [data-role='overseer.waiting'] {
   font-size: 0.8em;
-}
-[data-role='overseer.working'] {
-  color: var(--ok);
-}
-[data-role='overseer.waiting'] {
   color: var(--accent);
   font-weight: 650;
 }

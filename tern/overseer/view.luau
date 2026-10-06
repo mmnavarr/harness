@@ -84,13 +84,15 @@ local function worktreeNode(worktree, activePath)
 	end
 	local head = {
 		status,
-		text("branch", label, "overseer.branch", { grow = 1 }),
+		text("branch", label, "overseer.branch"),
 	}
+	if worktree.is_main then
+		table.insert(head, text("primary", "Primary", "overseer.badge"))
+	end
+	-- Pushes the remaining badges to the row's right edge.
+	table.insert(head, ui.el("div", { key = "spacer", grow = 1 }))
 	if worktree.dirty then
 		table.insert(head, text("dirty", "modified", "overseer.badgeWarn"))
-	end
-	if worktree.is_main then
-		table.insert(head, text("primary", "primary", "overseer.badge"))
 	end
 	if worktree.deleting then
 		table.insert(head, text("deleting", "deleting", "overseer.badgeWarn"))
@@ -131,11 +133,10 @@ local function worktreeNode(worktree, activePath)
 				else "overseer.dotTab"),
 			text("name", tab.name, "overseer.tabName", { grow = 1 }),
 		}
+		-- The pulsing dot already says an agent is working; waiting needs you, so it is spelled out.
 		if tab.agent == "waiting" then
 			table.insert(tabChildren, text("state", "waiting", "overseer.waiting"))
-		elseif tab.agent == "working" then
-			table.insert(tabChildren, text("state", "working", "overseer.working"))
-		elseif tab.busy then
+		elseif not tab.agent and tab.busy then
 			table.insert(tabChildren, text("busy", "running", "overseer.busy"))
 		end
 		if not tab.pane then
