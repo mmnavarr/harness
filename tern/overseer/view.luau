@@ -265,13 +265,12 @@ function View.render(model)
 				actions = { menu = { "Change base branch" } },
 			}, {
 				button("collapse", (if collapsed then "▸  " else "▾  ") .. project.name,
-					"collapse=" .. project.id, (if collapsed then "Expand " else "Collapse ") .. project.name,
+					"collapse=" .. project.id, (if collapsed then "Expand " else "Collapse ") .. project.name .. "\n" .. project.path,
 					"overseer.projectToggle"),
 				text("count", tostring(project.total), "overseer.count"),
 				button("create", "+", "create=" .. project.id, "New worktree from " .. project.base, "overseer.iconButton"),
 				ui.node("row", { key = "spacer", grow = 1 }, {}),
 			}),
-			text("path", project.path, "overseer.projectPath", { title = project.path }),
 		}
 		if project.error then
 			table.insert(projectChildren, text("error", project.error, "overseer.error"))

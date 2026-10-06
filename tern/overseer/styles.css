@@ -12,6 +12,9 @@
   padding-bottom: 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--t4) 20%, transparent);
 }
+[data-role='overseer.projectHeader'] {
+  padding-bottom: 4px;
+}
 [data-role='overseer.heading'],
 [data-role='overseer.formHeading'] {
   font-size: 1.15em;
@@ -57,14 +60,6 @@
   padding: 1px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--t4) 18%, transparent);
-}
-[data-role='overseer.projectPath'] {
-  color: var(--t4);
-  padding: 0 0 6px 20px;
-  font-size: 0.82em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* A worktree and its tabs form one group, highlighted together when active. */
 [data-role='overseer.worktree'] {
