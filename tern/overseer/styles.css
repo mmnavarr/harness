@@ -273,6 +273,13 @@
 [data-role='overseer.iconButtonOn'] {
   padding: 4px 8px;
 }
+/* The per-project New Worktree +: sized to match the worktree count beside it. */
+[data-role='overseer.projectHeader'] [data-role='overseer.iconButton'] {
+  padding: 0 5px;
+  font-size: 0.8em;
+  line-height: 16px;
+  border-radius: 5px;
+}
 /* A toggle that is on, e.g. Ice Box worktrees shown. */
 [data-role='overseer.iconButtonOn'] {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
