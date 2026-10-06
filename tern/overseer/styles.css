@@ -282,22 +282,10 @@
   color: var(--accent);
   border-color: var(--accent);
 }
-[data-role='overseer.icedHint'] {
-  margin: 2px 0 0 12px;
-  padding: 3px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--t3);
-  font: inherit;
-  font-size: 0.8em;
-  cursor: pointer;
-}
 [data-role='overseer.button']:hover,
 [data-role='overseer.primaryButton']:hover,
 [data-role='overseer.iconButton']:hover,
 [data-role='overseer.iconButtonOn']:hover,
-[data-role='overseer.icedHint']:hover,
 [data-role='overseer.projectToggle']:hover,
 [data-role='overseer.tabRow'].sf-act:hover {
   color: var(--t1);

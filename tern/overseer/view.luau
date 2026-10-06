@@ -283,13 +283,6 @@ function View.render(model)
 			for _, worktree in ipairs(project.worktrees or {}) do
 				table.insert(projectChildren, worktreeNode(worktree, model.activePath))
 			end
-			if project.hiddenIced > 0 then
-				-- In a row so the hint is only as wide as its text.
-				table.insert(projectChildren, ui.node("row", { key = "icedRow" }, {
-					button("iced", "🧊 " .. tostring(project.hiddenIced) .. " in the Ice Box",
-						"toggle-icebox", "Show Ice Box worktrees", "overseer.icedHint"),
-				}))
-			end
 			if not project.loading and not project.error and #(project.worktrees or {}) == 0 and project.hiddenIced == 0 then
 				table.insert(projectChildren, text("empty", "No worktrees found. Refresh to check this repository.", "overseer.hint"))
 			end
