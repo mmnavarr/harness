@@ -192,7 +192,8 @@
   background: var(--t4);
 }
 [data-role='overseer.badge'],
-[data-role='overseer.badgeWarn'] {
+[data-role='overseer.badgeWarn'],
+[data-role='overseer.badgeBad'] {
   flex-shrink: 0;
   font-size: 0.75em;
   padding: 1px 6px;
@@ -203,6 +204,17 @@
 [data-role='overseer.badgeWarn'] {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+[data-role='overseer.badgeBad'] {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+/* Uncommitted changes: a quiet mark hugging the name; hover the row for details. */
+[data-role='overseer.dirtyMark'] {
+  flex-shrink: 0;
+  margin-left: -4px;
+  color: var(--warn);
+  font-weight: 700;
 }
 [data-role='overseer.openHint'] {
   color: var(--accent);

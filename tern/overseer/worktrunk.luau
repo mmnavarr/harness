@@ -219,6 +219,18 @@ local function require_array(value, label)
 	end
 end
 
+-- Optional display details: absent or malformed values are dropped, not errors.
+local function count(value)
+	return if type(value) == "number" and value >= 0 then value else nil
+end
+
+local function divergence(value)
+	if type(value) ~= "table" then return nil end
+	local ahead, behind = count(value.ahead), count(value.behind)
+	if not ahead or not behind then return nil end
+	return { ahead = ahead, behind = behind, name = if type(value.name) == "string" then value.name else nil }
+end
+
 local function parse_worktrees(text, project)
 	local value = tern.json.decode(text)
 	local schema2 = type(value) == "table" and value.schema ~= nil
@@ -256,7 +268,8 @@ local function parse_worktrees(text, project)
 			if type(changes) ~= "table" then
 				error("Worktrunk could not determine working-tree status for " .. path .. ". Refresh to try again.", 0)
 			end
-			local dirty = row.operation_state == "conflicts"
+			local conflicts = row.operation_state == "conflicts"
+			local dirty = conflicts
 			for _, flag in ipairs({ "staged", "modified", "untracked", "renamed", "deleted" }) do
 				if type(changes[flag]) ~= "boolean" then
 					error("Worktrunk returned incomplete working-tree status for " .. path, 0)
@@ -266,8 +279,20 @@ local function parse_worktrees(text, project)
 			if changes.conflicted ~= nil and type(changes.conflicted) ~= "boolean" then
 				error("Worktrunk returned an invalid conflict flag for " .. path, 0)
 			end
-			dirty = dirty or changes.conflicted == true
-			table.insert(trees, { path = path, branch = if detached then nil else row.branch, is_main = main or path == project.path, detached = detached, dirty = dirty })
+			conflicts = conflicts or changes.conflicted == true
+			dirty = dirty or conflicts
+			local diff = type(changes.diff) == "table" and changes.diff or {}
+			table.insert(trees, {
+				path = path, branch = if detached then nil else row.branch, is_main = main or path == project.path,
+				detached = detached, dirty = dirty, conflicts = conflicts,
+				changes = {
+					staged = changes.staged, modified = changes.modified, untracked = changes.untracked,
+					renamed = changes.renamed, deleted = changes.deleted,
+					added_lines = count(diff.added), deleted_lines = count(diff.deleted),
+				},
+				-- Commits ahead/behind the default branch and the upstream.
+				base = divergence(row.main), remote = divergence(row.remote),
+			})
 		elseif not schema2 and type(row.kind) ~= "string" then
 			error("Worktrunk returned a row without a kind", 0)
 		end

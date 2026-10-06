@@ -52,6 +52,58 @@ local function basename(path)
 	return path:match("([^/]+)/*$") or path
 end
 
+local function plural(n, word)
+	return tostring(n) .. " " .. word .. (if n == 1 then "" else "s")
+end
+
+local function divergence(value)
+	if value.ahead == 0 and value.behind == 0 then return "up to date" end
+	local parts = {}
+	if value.ahead > 0 then table.insert(parts, tostring(value.ahead) .. " ahead") end
+	if value.behind > 0 then table.insert(parts, tostring(value.behind) .. " behind") end
+	return table.concat(parts, ", ")
+end
+
+-- The row's hover text: everything the minimal row leaves out. Lines without
+-- anything to say are omitted.
+local function details(worktree, branch)
+	local lines = { branch, worktree.path, "" }
+	if worktree.conflicts then table.insert(lines, "Merge conflicts: resolve them before continuing") end
+	local changes = worktree.changes
+	if worktree.dirty and changes then
+		local kinds = {}
+		for _, kind in { { "staged", "staged" }, { "modified", "edited" }, { "renamed", "renamed" },
+			{ "deleted", "deleted" }, { "untracked", "new files" } } do
+			if changes[kind[1]] then table.insert(kinds, kind[2]) end
+		end
+		local parts = {}
+		if changes.added_lines and changes.deleted_lines and changes.added_lines + changes.deleted_lines > 0 then
+			table.insert(parts, "+" .. tostring(changes.added_lines) .. " −" .. tostring(changes.deleted_lines))
+		end
+		if #kinds > 0 then table.insert(parts, table.concat(kinds, ", ")) end
+		if #parts > 0 then table.insert(lines, "Uncommitted: " .. table.concat(parts, " · ")) end
+	elseif not worktree.dirty then
+		table.insert(lines, "No uncommitted changes")
+	end
+	if worktree.base then table.insert(lines, "Default branch: " .. divergence(worktree.base)) end
+	if worktree.remote then
+		table.insert(lines, (worktree.remote.name or "Upstream") .. ": " .. divergence(worktree.remote))
+	end
+	local pr = worktree.pr and PR_STATES[worktree.pr.state]
+	if pr then table.insert(lines, "PR #" .. tostring(worktree.pr.number) .. " · " .. pr.label) end
+	if worktree.session then
+		local tabs = #(worktree.tabs or {})
+		local agent = if worktree.agent == "waiting" then " · agent waiting for you"
+			elseif worktree.agent == "working" then " · agent working"
+			else ""
+		table.insert(lines, "Session: " .. plural(tabs, "tab") .. agent)
+	else
+		table.insert(lines, "No session · click to open")
+	end
+	if worktree.iced then table.insert(lines, "In the Ice Box") end
+	return table.concat(lines, "\n")
+end
+
 local function worktreeNode(worktree, activePath)
 	local branch = worktree.branch or "Detached HEAD"
 	local label = worktree.displayName or branch
@@ -86,13 +138,17 @@ local function worktreeNode(worktree, activePath)
 		status,
 		text("branch", label, "overseer.branch"),
 	}
+	-- The conflicts badge already says the worktree has unfinished changes.
+	if worktree.dirty and not worktree.conflicts then
+		table.insert(head, text("dirty", "✱", "overseer.dirtyMark", { title = "Uncommitted changes" }))
+	end
 	if worktree.is_main then
 		table.insert(head, text("primary", "Primary", "overseer.badge"))
 	end
 	-- Pushes the remaining badges to the row's right edge.
 	table.insert(head, ui.el("div", { key = "spacer", grow = 1 }))
-	if worktree.dirty then
-		table.insert(head, text("dirty", "modified", "overseer.badgeWarn"))
+	if worktree.conflicts then
+		table.insert(head, text("conflicts", "conflicts", "overseer.badgeBad"))
 	end
 	if worktree.deleting then
 		table.insert(head, text("deleting", "deleting", "overseer.badgeWarn"))
@@ -113,11 +169,12 @@ local function worktreeNode(worktree, activePath)
 		elseif worktree.is_main then "primary checkout · " .. basename(worktree.path)
 		else basename(worktree.path)
 	local summary = ui.node("col", {
-		key = "row", role = "overseer.worktreeRow", title = branch .. "\n" .. worktree.path,
+		key = "row", role = "overseer.worktreeRow", title = details(worktree, branch),
 		aria = label .. (if worktree.agent == "waiting" then ", agent waiting for you"
 				elseif worktree.agent == "working" then ", agent working"
 				elseif worktree.session then ", session open"
 				else ", open session")
+			.. (if worktree.conflicts then ", merge conflicts" elseif worktree.dirty then ", uncommitted changes" else "")
 			.. (if worktree.iced then ", in the Ice Box" else ""),
 		actions = { click = if worktree.deleting then nil else "open=" .. worktree.path, menu = menu },
 	}, {
