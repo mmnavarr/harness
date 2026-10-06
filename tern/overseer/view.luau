@@ -276,7 +276,9 @@ function View.render(model)
 			table.insert(projectChildren, text("error", project.error, "overseer.error"))
 		end
 		if project.loading and #(project.worktrees or {}) == 0 then
-			table.insert(projectChildren, text("loading", "Loading worktrees...", "overseer.hint"))
+			table.insert(projectChildren, ui.node("col", { key = "loading", role = "overseer.loading" }, {
+				text("label", "Loading worktrees", "overseer.shimmer", { aria = "Loading worktrees" }),
+			}))
 		end
 		if not collapsed then
 			for _, worktree in ipairs(project.worktrees or {}) do

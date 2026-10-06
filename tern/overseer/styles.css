@@ -237,6 +237,31 @@
   background-repeat: no-repeat;
   background-position: center;
 }
+/* A project's worktrees are loading: a shimmering label, centered where its rows will appear. */
+[data-role='overseer.loading'] {
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+}
+[data-role='overseer.shimmer'] {
+  font-size: 0.9em;
+  color: transparent;
+  background-image: linear-gradient(90deg, var(--t3) 35%, var(--t1) 50%, var(--t3) 65%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: overseer-shimmer 1.8s linear infinite;
+}
+@keyframes overseer-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-role='overseer.shimmer'] {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
 [data-role='overseer.marker'],
 [data-role='overseer.hint'] {
   color: var(--t3);
