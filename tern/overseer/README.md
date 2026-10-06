@@ -39,8 +39,6 @@ The navigator is a native pane, not an application-wide sidebar. It opens to the
 
 **Agent activity:** the dot pulses while an agent is working in that worktree's session, and turns blue when one has asked you something and is waiting for an answer; waiting wins when a session has both. Tern's own agent blocks, which include omp, report these states directly: omp is **waiting** while its ask prompt is open, and neither working nor waiting between turns. Other agent CLIs run in a plain terminal (`pi`, `claude`, `codex`, `opencode`, `gemini`, `aider`, `amp`, `cursor-agent`, `crush`, `goose`) can only be seen working: they count as working while they report progress to the terminal, and a CLI that doesn't report progress (or hasn't yet, like Claude right after launch) counts as working for as long as it runs. With the system's reduce-motion setting on, a static ring replaces the pulse.
 
-**Status bar:** Overseer's segment at the right end of Tern's status bar counts agents across the window's sessions, such as **3 working · 1 waiting**, and reads **Projects** when none are active. Click it to open Projects. Tern hides the status bar when `"status_bar": false` is set in its settings.
-
 **Pull request badges** appear at the right end of a worktree's row when its branch has a GitHub pull request. They use GitHub's own Octicons and colours: grey draft, green open, purple merged, red closed. Hover for the number and state ("#2435 · Merged"); click to open the PR, following Tern's link setting. If a branch has several PRs, the open one wins, otherwise the most recently updated. PRs are matched by branch name, so merged PRs still show after GitHub deletes their branch. The primary checkout and branches without a PR show no badge.
 
 Each project makes one request through your signed-in `gh`, in the background, at most every 2 minutes, and right away when worktrees are added or removed or you click **↻**. Only projects whose `origin` is on github.com are checked. If a lookup fails (offline, signed out), the last known badges stay; the error is written to Tern's log.
@@ -117,7 +115,7 @@ Exercised in a **real Tern desktop window**, with a separate Tern configuration 
 - Dirty-worktree rejection with its files and session retained.
 - Primary-checkout menus without deletion, locked-session refusal, detached worktree removal, cancellation, and closing the last managed session while retaining a usable Projects session.
 - A failing `pre-remove` hook preserved the worktree and session and surfaced the failure, including a cold primary-session launch in Tern's daemonless mode.
-- Real omp agent blocks: idle, working, and waiting on an ask prompt, reflected in the worktree dot, the tab row (titled after the omp conversation rather than "Projects"), and the status-bar count, including from another session.
+- Real omp agent blocks: idle, working, and waiting on an ask prompt, reflected in the worktree dot and the tab row (titled after the omp conversation rather than "Projects").
 - Creation still worked through the renamed helper with a literal Unicode/shell-metacharacter branch. Detached deletion exercised empty-argument encoding under macOS Bash 3.2.
 
 The helper also passes `bash -n`. Run the nine real Git/Worktrunk regression tests with Python 3:

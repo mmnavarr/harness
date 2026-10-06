@@ -112,18 +112,17 @@ local function runsAgent(line)
 end
 
 -- Agent activity in this window: "waiting" (it asked you something) or
--- "working", per session id (as a string), per tab id and per pane id, plus
--- window-wide counts. Native agent blocks such as omp report their state;
+-- "working", per session id (as a string), per tab id and per pane id.
+-- Native agent blocks such as omp report their state;
 -- their `busy` stays set while they sit idle, so it isn't consulted for them.
 -- Agent CLIs in plain terminals only report progress, which Tern exposes as
 -- `busy` (a CLI that hasn't reported progress yet counts as busy while it runs).
 local function agentActivity(cx)
 	local tabSession = {}
 	for _, tab in cx.session:tabs() do tabSession[tab.id] = tostring(tab.session) end
-	local activity = { sessions = {}, tabs = {}, panes = {}, working = 0, waiting = 0 }
+	local activity = { sessions = {}, tabs = {}, panes = {} }
 	local function mark(pane, tab, state)
 		activity.panes[pane] = state
-		activity[state] += 1
 		-- Waiting wins: it is the state that needs you.
 		local session = tabSession[tab] or ""
 		if activity.sessions[session] ~= "waiting" then activity.sessions[session] = state end
@@ -1041,25 +1040,9 @@ tern.override("new_tab", function(cx)
 	return true
 end)
 
--- Formatters get no window context, so `updateStatus` (run from the tick)
--- caches the segment and asks Tern to redraw the status line when it changes.
-local statusSegment = { text = "Projects", icon = "branch", command = "plugin.overseer.projects" }
-
 tern.chrome.status(function()
-	return { statusSegment }
+	return { { text = "Projects", icon = "branch", command = "plugin.overseer.projects" } }
 end)
-
-local function updateStatus(cx)
-	local activity = agentActivity(cx)
-	local parts = {}
-	if activity.working > 0 then table.insert(parts, `{activity.working} working`) end
-	if activity.waiting > 0 then table.insert(parts, `{activity.waiting} waiting`) end
-	local text = if #parts > 0 then table.concat(parts, " · ") else "Projects"
-	local tone = if activity.waiting > 0 then "warning" else nil
-	if text == statusSegment.text and tone == statusSegment.tone then return end
-	statusSegment = { text = text, icon = "branch", tone = tone, command = "plugin.overseer.projects" }
-	tern.chrome.refresh()
-end
 
 -- Runs fn in a timer callback of its own, reporting (not raising) errors.
 -- Tern gives every callback its own 50 ms budget and disables a plugin's timers
@@ -1086,7 +1069,6 @@ local function tick(cx)
 			lastRefresh = tern.now()
 			separately(refresh)
 		end
-		separately(updateStatus)
 		separately(redraw)
 	end)
 	if not ok then
